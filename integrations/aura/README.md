@@ -101,6 +101,23 @@ recorded response shapes.
 See [THREAT_MODEL.md](./THREAT_MODEL.md) — what the verdict does and does not
 prove, and the failure modes a verifier should account for.
 
+## Carry the AURA badge
+
+Show your live trust verdict in your own README — it updates automatically and
+links back to your AURA profile:
+
+```markdown
+[![AURA Verified](https://agent.auraopenprotocol.org/badge?did=YOUR_DID)](https://agent.auraopenprotocol.org/check?did=YOUR_DID)
+```
+
+A shields-style badge colored by verdict (`trusted` green, `caution` amber,
+`high_risk` red, `new` blue, `unknown` grey). Add `&score=1` to show the
+composite score. No DID yet? The bare badge is a generic mark:
+
+```markdown
+[![Powered by AURA](https://agent.auraopenprotocol.org/badge)](https://auraopenprotocol.org)
+```
+
 ## What's behind the verdict
 
 [AURA Open Protocol](https://auraopenprotocol.org) — W3C DID identity plus 8
