@@ -52,7 +52,7 @@ Add this block to your project or global CLAUDE.md:
 复杂任务结束必须自动输出:
 1. 自审 — 矛盾/遗漏/未验证假设/美化
 2. 教学 — 为什么做/如何做/核心收益 (仅代码任务)
-3. 交付门 — 五库+C盘
+3. 交付门 — 五库+磁盘
 4. 沉淀 — 新事实→persona | 翻车→growth-log
 5. 产出索引
 ```
