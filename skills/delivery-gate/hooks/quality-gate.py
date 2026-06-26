@@ -30,29 +30,32 @@ LIBS = {
 
 MIN_CHARS = 40          # minimum transcript length to trigger checks
 COMPLEX_THRESHOLD = 3   # Edit/Write calls to classify as "complex task"
-C_WARN_GB = 50          # warn when free space below this
-C_CRIT_GB = 15          # block stop when below this
+DISK_WARN_GB = 50       # warn when free space below this
+DISK_CRIT_GB = 15       # block stop when below this
 # ---- End Configuration ----
 
 
 def get_project_memory_dir():
-    """Find the current project's memory directory."""
+    """Find the current project's memory directory.
+    Returns None if no memory directory exists for this project.
+    Does NOT fall back to other projects (privacy boundary)."""
     cwd = os.environ.get('CLAUDE_PROJECT_DIR', os.getcwd())
     safe = cwd.replace(':', '').replace('\\', '-').replace('/', '-')
     mem = os.path.expanduser(f'~/.claude/projects/{safe}/memory')
     if os.path.isdir(mem):
         return mem
-    # Fallback: most recently modified project memory
-    base = os.path.expanduser('~/.claude/projects')
-    if os.path.isdir(base):
-        dirs = []
-        for d in os.listdir(base):
-            dp = os.path.join(base, d)
-            if os.path.isdir(dp):
-                dirs.append((os.path.getmtime(dp), dp))
-        if dirs:
-            return os.path.join(sorted(dirs, reverse=True)[0][1], 'memory')
     return None
+
+
+def check_disk():
+    """Check free space on the disk containing the home directory.
+    Works cross-platform: macOS, Linux, Windows."""
+    try:
+        home = os.path.expanduser('~')
+        free_gb = shutil.disk_usage(home).free // (2**30)
+        return free_gb
+    except Exception:
+        return None
 
 
 def check_stale_libs(mem_dir):
@@ -89,12 +92,24 @@ def count_edits(text):
 
 def main():
     raw = sys.stdin.read()
+
+    # 1. Disk check FIRST — must always run, regardless of transcript length
+    disk_free = check_disk()
+    if disk_free is not None:
+        if disk_free < DISK_CRIT_GB:
+            print(f'\nBlocked: disk space at {disk_free}GB (threshold: {DISK_CRIT_GB}GB). '
+                  f'Free space before continuing.', file=sys.stderr)
+            sys.exit(2)
+        if disk_free < DISK_WARN_GB:
+            print(f'  WARN: disk space {disk_free}GB free', file=sys.stderr)
+
+    # 2. Short session — skip remaining checks
     if len(raw) < MIN_CHARS:
         sys.exit(0)
 
     tail = raw[-8000:]
 
-    # 1. Hard pattern detection
+    # 3. Rationalization pattern detection
     hits = []
     for p in RATIONALIZE:
         m = re.search(p, tail, re.IGNORECASE)
@@ -103,7 +118,7 @@ def main():
     if hits:
         print(f'quality-gate: {hits}', file=sys.stderr)
 
-    # 2. Delivery gate
+    # 4. Learning capture check
     mem_dir = get_project_memory_dir()
     edit_count = count_edits(raw)
     is_complex = edit_count >= COMPLEX_THRESHOLD
@@ -112,10 +127,6 @@ def main():
         stale = check_stale_libs(mem_dir)
     else:
         stale = []
-
-    c_free = shutil.disk_usage('C:').free // (2**30)
-    c_warn = c_free < C_WARN_GB
-    c_crit = c_free < C_CRIT_GB
 
     # Build warning message
     parts = []
@@ -127,20 +138,14 @@ def main():
         )
     if stale:
         parts.append(f'  Stale ({len(stale)}): {", ".join(stale)}')
-    if c_warn:
-        parts.append(f'  {"CRIT" if c_crit else "WARN"}: C drive {c_free}GB free')
 
     if parts:
         print('\n'.join(parts), file=sys.stderr)
 
-    # 3. Block conditions
+    # 5. Block if complex task completed without learning capture
     if is_complex and len(stale) >= len(LIBS):
         print('\nBlocked: complex task completed but no learning captured today.', file=sys.stderr)
         print('Update at least one library (e.g. growth-log) before stopping.', file=sys.stderr)
-        sys.exit(2)
-
-    if c_crit:
-        print(f'\nBlocked: C drive at {c_free}GB. Free space before continuing.', file=sys.stderr)
         sys.exit(2)
 
     sys.exit(0)
