@@ -33,7 +33,7 @@ LIBS = {
     'decisions-log': 'decisions/log.md',
     'growth-log': 'growth-log/',          # directory — any file updated today counts
     'output-index': 'output-index.md',
-    'tooling-capabilities': 'tooling-capabilities.md',
+    'tooling-capabilities': 'tooling_capabilities.md',
 }
 
 MIN_CHARS = 40          # minimum transcript length to trigger checks
