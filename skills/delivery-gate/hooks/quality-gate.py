@@ -7,6 +7,8 @@ Blocks Claude from stopping when a complex task completed without learning captu
 Install: cp this file to ~/.claude/scripts/quality-gate.py
 Configure: Add to settings.json hooks.Stop
 """
+from __future__ import annotations
+
 import sys
 import os
 import re
