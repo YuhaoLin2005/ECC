@@ -49,12 +49,16 @@ def get_project_memory_dir():
 
 def check_disk():
     """Check free space on the disk containing the home directory.
-    Works cross-platform: macOS, Linux, Windows."""
+    Works cross-platform: macOS, Linux, Windows.
+    Returns free GB, or None if the home directory is unavailable
+    (e.g. on a headless CI runner without a real home dir)."""
     try:
         home = os.path.expanduser('~')
         free_gb = shutil.disk_usage(home).free // (2**30)
         return free_gb
-    except Exception:
+    except (FileNotFoundError, PermissionError, OSError):
+        # Home dir not accessible — log and continue without disk check
+        print('  WARN: cannot check disk space (home dir inaccessible)', file=sys.stderr)
         return None
 
 
@@ -126,7 +130,8 @@ def main():
     if mem_dir:
         stale = check_stale_libs(mem_dir)
     else:
-        stale = []
+        # No memory directory → all libraries effectively stale
+        stale = list(LIBS.keys())
 
     # Build warning message
     parts = []
