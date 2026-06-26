@@ -67,7 +67,7 @@ The hook receives the full transcript on stdin. It:
 1. Detects "rationalization patterns" (e.g., "this is a pre-existing issue")
 2. Counts Edit/Write calls to detect complex tasks
 3. Checks if five learning libraries were updated today
-4. Checks C drive space
+4. Checks home-directory filesystem disk space
 5. Blocks (exit 2) when complex tasks complete without learning capture
 
 ## Customization
@@ -111,7 +111,7 @@ Claude tries to stop → hook runs:
 ### Low disk space — BLOCKED regardless
 
 ```
-$ claude  # any session, disk at 12GB
+$ claude  # any session, home filesystem at 12GB
 ...
 Claude tries to stop → hook runs:
   disk_free=12GB < 15GB critical → exit 2 (blocked)

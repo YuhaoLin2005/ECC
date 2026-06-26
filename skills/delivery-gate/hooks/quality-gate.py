@@ -7,7 +7,13 @@ Blocks Claude from stopping when a complex task completed without learning captu
 Install: cp this file to ~/.claude/scripts/quality-gate.py
 Configure: Add to settings.json hooks.Stop
 """
-import sys, os, re, datetime, shutil
+import sys
+import os
+import re
+import datetime
+import shutil
+import logging
+from typing import Optional
 
 # ---- Configuration ----
 # Patterns that indicate rationalized incompleteness
@@ -34,8 +40,16 @@ DISK_WARN_GB = 50       # warn when free space below this
 DISK_CRIT_GB = 15       # block stop when below this
 # ---- End Configuration ----
 
+# Configure stderr logger per coding guidelines
+logging.basicConfig(
+    stream=sys.stderr,
+    format='%(levelname)s: %(message)s',
+    level=logging.WARNING,
+)
+log = logging.getLogger('quality-gate')
 
-def get_project_memory_dir():
+
+def get_project_memory_dir() -> Optional[str]:
     """Find the current project's memory directory.
     Returns None if no memory directory exists for this project.
     Does NOT fall back to other projects (privacy boundary)."""
@@ -47,7 +61,7 @@ def get_project_memory_dir():
     return None
 
 
-def check_disk():
+def check_disk() -> Optional[int]:
     """Check free space on the disk containing the home directory.
     Works cross-platform: macOS, Linux, Windows.
     Returns free GB, or None if the home directory is unavailable
@@ -58,54 +72,61 @@ def check_disk():
         return free_gb
     except (FileNotFoundError, PermissionError, OSError):
         # Home dir not accessible — log and continue without disk check
-        print('  WARN: cannot check disk space (home dir inaccessible)', file=sys.stderr)
+        log.warning('cannot check disk space (home dir inaccessible)')
         return None
 
 
-def check_stale_libs(mem_dir):
+def check_stale_libs(mem_dir: str) -> list[str]:
     """Return list of library names not updated today."""
     today = datetime.date.today()
-    stale = []
-    for name, path in LIBS.items():
-        full = os.path.join(mem_dir, path)
-        if os.path.isdir(full):
-            has_today = False
-            for f in os.listdir(full):
-                fp = os.path.join(full, f)
-                if os.path.isfile(fp):
-                    mt = datetime.datetime.fromtimestamp(os.path.getmtime(fp)).date()
-                    if mt == today:
-                        has_today = True
-                        break
-            if not has_today:
+    stale: list[str] = []
+    try:
+        for name, path in LIBS.items():
+            full = os.path.join(mem_dir, path)
+            if os.path.isdir(full):
+                has_today = False
+                for f in os.listdir(full):
+                    fp = os.path.join(full, f)
+                    if os.path.isfile(fp):
+                        mt = datetime.datetime.fromtimestamp(os.path.getmtime(fp)).date()
+                        if mt == today:
+                            has_today = True
+                            break
+                if not has_today:
+                    stale.append(name)
+            elif os.path.exists(full):
+                mt = datetime.datetime.fromtimestamp(os.path.getmtime(full)).date()
+                if mt != today:
+                    stale.append(name)
+            else:
                 stale.append(name)
-        elif os.path.exists(full):
-            mt = datetime.datetime.fromtimestamp(os.path.getmtime(full)).date()
-            if mt != today:
-                stale.append(name)
-        else:
-            stale.append(name)
+    except OSError as e:
+        log.warning('cannot check stale libs in %s: %s', mem_dir, e)
+        return []  # inconclusive — don't block on filesystem errors
     return stale
 
 
-def count_edits(text):
+def count_edits(text: str) -> int:
     """Count Edit/Write tool invocations in the last assistant response."""
     tail = text[-8000:]
     return len(re.findall(r'(?:Edit|Write)\s+', tail))
 
 
-def main():
+def main() -> None:
     raw = sys.stdin.read()
+
+    # Stop-hook contract: echo stdin to stdout so the harness can forward the payload
+    sys.stdout.write(raw)
 
     # 1. Disk check FIRST — must always run, regardless of transcript length
     disk_free = check_disk()
     if disk_free is not None:
         if disk_free < DISK_CRIT_GB:
-            print(f'\nBlocked: disk space at {disk_free}GB (threshold: {DISK_CRIT_GB}GB). '
-                  f'Free space before continuing.', file=sys.stderr)
+            log.warning('Blocked: disk space at %dGB (threshold: %dGB). Free space before continuing.',
+                        disk_free, DISK_CRIT_GB)
             sys.exit(2)
         if disk_free < DISK_WARN_GB:
-            print(f'  WARN: disk space {disk_free}GB free', file=sys.stderr)
+            log.warning('WARN: disk space %dGB free', disk_free)
 
     # 2. Short session — skip remaining checks
     if len(raw) < MIN_CHARS:
@@ -120,7 +141,7 @@ def main():
         if m:
             hits.append(m.group(0)[:80])
     if hits:
-        print(f'quality-gate: {hits}', file=sys.stderr)
+        log.warning('quality-gate: %s', hits)
 
     # 4. Learning capture check
     mem_dir = get_project_memory_dir()
@@ -146,12 +167,12 @@ def main():
         parts.append(f'  Stale ({len(stale)}): {", ".join(stale)}')
 
     if parts:
-        print('\n'.join(parts), file=sys.stderr)
+        log.warning('\n'.join(parts))
 
     # 5. Block if complex task completed without learning capture
     if is_complex and len(stale) >= len(LIBS):
-        print('\nBlocked: complex task completed but no learning captured today.', file=sys.stderr)
-        print('Update at least one library (e.g. growth-log) before stopping.', file=sys.stderr)
+        log.warning('Blocked: complex task completed but no learning captured today.')
+        log.warning('Update at least one library (e.g. growth-log) before stopping.')
         sys.exit(2)
 
     sys.exit(0)
