@@ -130,8 +130,9 @@ def main():
     if mem_dir:
         stale = check_stale_libs(mem_dir)
     else:
-        # No memory directory → all libraries effectively stale
-        stale = list(LIBS.keys())
+        # No memory dir → user hasn't opted into learning capture yet.
+        # Don't block them — the hook should only enforce what was set up.
+        stale = []
 
     # Build warning message
     parts = []
