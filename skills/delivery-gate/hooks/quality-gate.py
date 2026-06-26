@@ -87,19 +87,28 @@ def check_stale_libs(mem_dir: str) -> list[str]:
             full = os.path.join(mem_dir, path)
             if os.path.isdir(full):
                 has_today = False
-                for f in os.listdir(full):
-                    fp = os.path.join(full, f)
-                    if os.path.isfile(fp):
-                        mt = datetime.datetime.fromtimestamp(os.path.getmtime(fp)).date()
-                        if mt == today:
-                            has_today = True
-                            break
+                # Use os.walk to handle nested subdirectories (e.g. growth-log/2026/06-26.md)
+                for dirpath, _dirnames, filenames in os.walk(full):
+                    for f in filenames:
+                        fp = os.path.join(dirpath, f)
+                        try:
+                            mt = datetime.datetime.fromtimestamp(os.path.getmtime(fp)).date()
+                            if mt == today:
+                                has_today = True
+                                break
+                        except OSError:
+                            continue  # skip unreadable files
+                    if has_today:
+                        break
                 if not has_today:
                     stale.append(name)
             elif os.path.exists(full):
-                mt = datetime.datetime.fromtimestamp(os.path.getmtime(full)).date()
-                if mt != today:
-                    stale.append(name)
+                try:
+                    mt = datetime.datetime.fromtimestamp(os.path.getmtime(full)).date()
+                    if mt != today:
+                        stale.append(name)
+                except OSError:
+                    stale.append(name)  # can't check → treat as stale
             else:
                 stale.append(name)
     except OSError as e:
