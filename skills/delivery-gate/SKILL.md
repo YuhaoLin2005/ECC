@@ -75,7 +75,47 @@ Edit `quality-gate.py`:
 - `RATIONALIZE` regex patterns — add your team's common excuses
 - `LIBS` dictionary — customize which files to check
 - `MIN_CHARS` — minimum transcript length to trigger checks
-- C drive thresholds — adjust for your environment
+- `DISK_WARN_GB` / `DISK_CRIT_GB` — adjust for your environment
+
+## Examples
+
+### Normal session — no blocking
+
+```
+$ claude  # edits 2 files, updates growth-log
+...
+Claude tries to stop → hook runs:
+  edit_count=2 (< 3, not complex) → exit 0 (allowed)
+```
+
+### Complex task, learning captured — allowed
+
+```
+$ claude  # edits 5 files, updates growth-log/2026-06-26.md
+...
+Claude tries to stop → hook runs:
+  edit_count=5 (complex) → checks LIBS → growth-log updated today → exit 0 (allowed)
+```
+
+### Complex task, no learning — BLOCKED
+
+```
+$ claude  # edits 4 files, nothing written to memory
+...
+Claude tries to stop → hook runs:
+  edit_count=4 (complex) → checks LIBS → all 5 stale → exit 2 (blocked)
+  stderr: "Blocked: complex task completed but no learning captured today."
+```
+
+### Low disk space — BLOCKED regardless
+
+```
+$ claude  # any session, disk at 12GB
+...
+Claude tries to stop → hook runs:
+  disk_free=12GB < 15GB critical → exit 2 (blocked)
+  stderr: "Blocked: disk space at 12GB (threshold: 15GB)."
+```
 
 ## Related Skills
 
