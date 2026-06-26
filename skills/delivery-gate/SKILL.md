@@ -18,7 +18,8 @@ A Stop hook that forces Claude to verify quality before it can finish. Unlike ve
 ### 1. Install the hook script
 
 ```bash
-cp hooks/quality-gate.py ~/.claude/scripts/
+# From the ECC repo root (after cloning/forking):
+cp skills/delivery-gate/hooks/quality-gate.py ~/.claude/scripts/
 ```
 
 ### 2. Configure in settings.json
