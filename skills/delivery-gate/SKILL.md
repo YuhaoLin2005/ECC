@@ -79,6 +79,5 @@ Edit `quality-gate.py`:
 
 ## Related Skills
 
-- `verification-loop` — Technical quality checks (build, type, lint, test, security). Complements delivery-gate's semantic self-audit.
-- `continuous-learning-v2` — AI-driven learning capture. Pairs well with the five-library memory system.
-- `gateguard` — PreToolUse fact-forcing gate. Different layer of the quality stack.
+- `verification-loop` — Technical checks (build, type, lint, test). Different scope: code output vs learning capture.
+- `gateguard` — Same architecture (deterministic hook + pattern matching), different lifecycle point (PreToolUse vs Stop).
