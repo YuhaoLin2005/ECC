@@ -12,6 +12,7 @@ from __future__ import annotations
 import sys
 import os
 import re
+import json
 import datetime
 import shutil
 import logging
@@ -133,6 +134,21 @@ def main() -> None:
     # Stop-hook contract: echo stdin to stdout so the harness can forward the payload
     sys.stdout.write(raw)
 
+    # Resolve transcript: Stop hooks may receive raw text OR JSON with transcript_path.
+    # Handle both so the gate works regardless of Claude Code version/configuration.
+    transcript = raw
+    try:
+        payload = json.loads(raw)
+        if isinstance(payload, dict) and 'transcript_path' in payload:
+            tp = os.path.expanduser(payload['transcript_path'])
+            if os.path.exists(tp):
+                with open(tp, 'r', encoding='utf-8') as f:
+                    transcript = f.read()
+            else:
+                log.warning('transcript_path %s not found, falling back to raw stdin', tp)
+    except (json.JSONDecodeError, TypeError, OSError):
+        pass  # Not JSON or unreadable — use raw stdin as transcript
+
     # 1. Disk check — three-level: remind / warn / block
     disk_free = check_disk()
     if disk_free is not None:
@@ -146,13 +162,15 @@ def main() -> None:
             log.info('Reminder: disk space at %dGB (<%dGB)', disk_free, DISK_REMIND_GB)
 
     # 2. Short session — skip remaining checks
-    if len(raw) < MIN_CHARS:
+    if len(transcript) < MIN_CHARS:
         sys.exit(0)
+
+    tail = transcript[-8000:]
 
     # 3. Rationalization pattern detection
     hits = []
     for p in RATIONALIZE:
-        m = re.search(p, raw[-8000:], re.IGNORECASE)
+        m = re.search(p, tail, re.IGNORECASE)
         if m:
             hits.append(m.group(0)[:80])
     if hits:
@@ -160,7 +178,7 @@ def main() -> None:
 
     # 4. Learning capture check
     mem_dir = get_project_memory_dir()
-    edit_count = count_edits(raw)
+    edit_count = count_edits(transcript)
     is_complex = edit_count >= COMPLEX_THRESHOLD
 
     if mem_dir:
