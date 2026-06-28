@@ -47,7 +47,7 @@ DISK_CRIT_GB = 15       # block stop when below this
 logging.basicConfig(
     stream=sys.stderr,
     format='%(levelname)s: %(message)s',
-    level=logging.INFO,
+    level=logging.INFO,  # INFO for DISK_REMIND; warnings still emitted
 )
 log = logging.getLogger('quality-gate')
 
@@ -147,7 +147,7 @@ def main() -> None:
     if len(raw) < MIN_CHARS:
         sys.exit(0)
 
-    # 3. Rationalization pattern detection (logs warning only)
+    # 3. Rationalization pattern detection
     hits = []
     for p in RATIONALIZE:
         m = re.search(p, raw[-8000:], re.IGNORECASE)
@@ -164,12 +164,15 @@ def main() -> None:
     if mem_dir:
         stale = check_stale_libs(mem_dir)
     else:
-        # No memory dir — setup incomplete. Warn but don't block;
-        # blocking users who haven't opted in yet is worse than false-pass.
+        # No memory dir — setup incomplete.
         if is_complex:
+            # User is actively editing but hasn't configured memory yet.
+            # Treat all libraries as stale so the gate enforces setup.
             log.warning('No project memory directory found — cannot verify learning capture.')
             log.warning('Set up memory/ per delivery-gate SKILL.md to enable enforcement.')
-        stale = []
+            stale = list(LIBS.keys())
+        else:
+            stale = []
 
     parts = []
     if is_complex:
