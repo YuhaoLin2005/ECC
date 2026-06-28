@@ -179,12 +179,13 @@ def main() -> None:
     if mem_dir:
         stale = check_stale_libs(mem_dir)
     else:
+        # No memory dir — setup incomplete.
+        # Warn but DO NOT block: blocking here deadlocks new users
+        # who haven't created the memory directory yet.
         if is_complex:
             log.warning('No project memory directory found — cannot verify learning capture.')
             log.warning('Set up memory/ per delivery-gate SKILL.md to enable enforcement.')
-            stale = list(LIBS.keys())
-        else:
-            stale = []
+        stale = []
 
     parts = []
     if is_complex:
