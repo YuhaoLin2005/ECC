@@ -152,8 +152,6 @@ def main() -> None:
         if disk_free < DISK_CRIT_GB:
             log.warning('Blocked: disk space at %dGB (<%dGB). Free space before continuing.',
                         disk_free, DISK_CRIT_GB)
-            log.warning('Blocked: disk space at %dGB (<%dGB). Free space before continuing.',
-                        disk_free, DISK_CRIT_GB)
             sys.exit(2)
         if disk_free < DISK_WARN_GB:
             log.warning('WARN: disk space at %dGB (<%dGB)', disk_free, DISK_WARN_GB)
