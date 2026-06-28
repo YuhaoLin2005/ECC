@@ -47,7 +47,7 @@ DISK_CRIT_GB = 15       # block stop when below this
 logging.basicConfig(
     stream=sys.stderr,
     format='%(levelname)s: %(message)s',
-    level=logging.WARNING,
+    level=logging.INFO,
 )
 log = logging.getLogger('quality-gate')
 
@@ -120,11 +120,11 @@ def check_stale_libs(mem_dir: str) -> list[str]:
 
 
 def count_edits(text: str) -> int:
-    """Count Edit/Write tool invocations in the transcript.
+    """Count Edit/Write tool invocations in the full transcript.
     Matches structured tool-call JSON patterns to avoid false-positives
-    from ordinary English prose."""
-    tail = text[-8000:]
-    return len(re.findall(r'"name":\s*"(?:Edit|Write)"', tail))
+    from ordinary English prose (e.g., 'Edit the file' in conversation).
+    Scans entire transcript — not truncated to tail."""
+    return len(re.findall(r'"name":\s*"(?:Edit|Write)"', text))
 
 
 def main() -> None:
@@ -147,12 +147,10 @@ def main() -> None:
     if len(raw) < MIN_CHARS:
         sys.exit(0)
 
-    tail = raw[-8000:]
-
-    # 3. Rationalization pattern detection
+    # 3. Rationalization pattern detection (logs warning only)
     hits = []
     for p in RATIONALIZE:
-        m = re.search(p, tail, re.IGNORECASE)
+        m = re.search(p, raw[-8000:], re.IGNORECASE)
         if m:
             hits.append(m.group(0)[:80])
     if hits:
@@ -166,6 +164,11 @@ def main() -> None:
     if mem_dir:
         stale = check_stale_libs(mem_dir)
     else:
+        # No memory dir — setup incomplete. Warn but don't block;
+        # blocking users who haven't opted in yet is worse than false-pass.
+        if is_complex:
+            log.warning('No project memory directory found — cannot verify learning capture.')
+            log.warning('Set up memory/ per delivery-gate SKILL.md to enable enforcement.')
         stale = []
 
     parts = []

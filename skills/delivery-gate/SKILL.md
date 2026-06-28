@@ -1,11 +1,11 @@
 ---
 name: delivery-gate
-description: Stop hook that blocks Claude from finishing until quality checks pass. Detects incomplete tasks, stale learning logs, and low disk space. Complements verification-loop by checking thinking quality (contradictions, omissions, unverified assumptions) rather than just code quality.
+description: Stop hook that blocks Claude from finishing until quality checks pass. Detects rationalization patterns, stale learning logs (via mtime), and low disk space. Complements verification-loop by enforcing learning capture rather than just checking code quality.
 ---
 
 # Delivery Gate — Self-Audit Stop Hook
 
-A Stop hook that forces Claude to verify quality before it can finish. Unlike verification-loop (which checks build/test/lint), this system checks **thinking quality**: did Claude assume something untested? Did it skip documenting a lesson? Is disk space dangerously low?
+A Stop hook that blocks Claude from finishing when quality conditions aren't met. Unlike verification-loop (which checks build/test/lint), this system checks **session hygiene**: did Claude rationalize skipping work? Did it update learning logs after code changes? Is disk space dangerously low?
 
 ## When to Activate
 
@@ -64,11 +64,11 @@ See `memory/README.md` for the five-library setup.
 ## How It Works
 
 The hook receives the full transcript on stdin. It:
-1. Detects "rationalization patterns" (e.g., "this is a pre-existing issue")
-2. Counts Edit/Write calls to detect complex tasks
-3. Checks if five learning libraries were updated today
+1. Scans for rationalization patterns (e.g., "this is a pre-existing issue", "skip tests for now")
+2. Counts Edit/Write tool invocations to detect complex tasks
+3. Checks if five learning libraries were modified today (filesystem mtime)
 4. Checks home-directory filesystem disk space
-5. Blocks (exit 2) when complex tasks complete without learning capture
+5. Blocks (exit 2) when complex tasks complete without learning capture or disk is critically low
 
 ## Customization
 
@@ -76,7 +76,7 @@ Edit `quality-gate.py`:
 - `RATIONALIZE` regex patterns — add your team's common excuses
 - `LIBS` dictionary — customize which files to check
 - `MIN_CHARS` — minimum transcript length to trigger checks
-- `DISK_WARN_GB` / `DISK_CRIT_GB` — adjust for your environment
+- `DISK_REMIND_GB` / `DISK_WARN_GB` / `DISK_CRIT_GB` — adjust for your environment
 
 ## Examples
 
