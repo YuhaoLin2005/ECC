@@ -1,6 +1,8 @@
 ---
 name: growth-log
 description: "Use when completing a complex task, after a failure or mistake, when the delivery gate flags stale learning logs, or when reviewing what was learned over a period. Teaches how to write growth logs that extract reusable patterns — not diary entries."
+metadata:
+  origin: ECC
 ---
 
 # Growth Log Skill
