@@ -19,7 +19,6 @@ import logging
 from typing import Optional
 
 # ---- Configuration ----
-# Patterns that indicate rationalized incompleteness
 RATIONALIZE = [
     r'(?:this|that)\s+is\s+a\s+pre[- ]existing\s+(?:issue|bug)\b(?!\s+(?:that|which|and))',
     r'skipping\s+(?:tests?|lint|coverage|type[- ]check)\s+for\s+now',
@@ -27,8 +26,6 @@ RATIONALIZE = [
     r'(?:not\s+addressing|won\'t\s+fix|leaving)\s+the\s+(?:failing|broken)\s+(?:test|build)',
 ]
 
-# Files to check for today's updates (relative to project memory dir)
-# Customize these to match your learning-capture workflow
 LIBS = {
     'ratings-tracker': 'ratings-tracker.md',
     'decisions-log': 'decisions/log.md',
@@ -60,6 +57,7 @@ def get_project_memory_dir() -> Optional[str]:
     cwd = os.environ.get('CLAUDE_PROJECT_DIR', os.getcwd())
     safe = cwd.replace(':', '').replace('\\', '-').replace('/', '-')
     mem = os.path.expanduser(f'~/.claude/projects/{safe}/memory')
+    log.info('Looking for memory dir: cwd=%s -> %s', cwd, mem)
     if os.path.isdir(mem):
         return mem
     return None
@@ -130,12 +128,9 @@ def count_edits(text: str) -> int:
 
 def main() -> None:
     raw = sys.stdin.read()
-
-    # Stop-hook contract: echo stdin to stdout so the harness can forward the payload
     sys.stdout.write(raw)
 
     # Resolve transcript: Stop hooks may receive raw text OR JSON with transcript_path.
-    # Handle both so the gate works regardless of Claude Code version/configuration.
     transcript = raw
     try:
         payload = json.loads(raw)
@@ -147,7 +142,7 @@ def main() -> None:
             else:
                 log.warning('transcript_path %s not found, falling back to raw stdin', tp)
     except (json.JSONDecodeError, TypeError, OSError):
-        pass  # Not JSON or unreadable — use raw stdin as transcript
+        pass
 
     # 1. Disk check — three-level: remind / warn / block
     disk_free = check_disk()
@@ -184,17 +179,13 @@ def main() -> None:
     if mem_dir:
         stale = check_stale_libs(mem_dir)
     else:
-        # No memory dir — setup incomplete.
         if is_complex:
-            # User is actively editing but hasn't configured memory yet.
-            # Treat all libraries as stale so the gate enforces setup.
             log.warning('No project memory directory found — cannot verify learning capture.')
             log.warning('Set up memory/ per delivery-gate SKILL.md to enable enforcement.')
             stale = list(LIBS.keys())
         else:
             stale = []
 
-    # Build warning message
     parts = []
     if is_complex:
         status_icons = ['X' if s in stale else 'O' for s in LIBS]
