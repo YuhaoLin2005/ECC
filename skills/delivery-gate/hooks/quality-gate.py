@@ -31,29 +31,29 @@ RATIONALIZE = [
 LIBS = {
     'ratings-tracker': 'ratings-tracker.md',
     'decisions-log': 'decisions/log.md',
-    'growth-log': 'growth-log/',          # directory — any file updated today counts
+    'growth-log': 'growth-log/',
     'output-index': 'output-index.md',
     'tooling-capabilities': 'tooling_capabilities.md',
 }
 
-MIN_CHARS = 40          # minimum transcript length to trigger checks
-COMPLEX_THRESHOLD = 3   # Edit/Write calls to classify as "complex task"
-DISK_REMIND_GB = 50     # remind when free space below this
-DISK_WARN_GB = 30       # warn when free space below this
-DISK_CRIT_GB = 15       # block stop when below this
+MIN_CHARS = 40
+COMPLEX_THRESHOLD = 3
+DISK_REMIND_GB = 50
+DISK_WARN_GB = 30
+DISK_CRIT_GB = 15
 # ---- End Configuration ----
 
-# Configure stderr logger per coding guidelines
 logging.basicConfig(
     stream=sys.stderr,
     format='%(levelname)s: %(message)s',
-    level=logging.INFO,  # INFO for DISK_REMIND; warnings still emitted
+    level=logging.INFO,
 )
 log = logging.getLogger('quality-gate')
 
 
 def get_project_memory_dir() -> Optional[str]:
     """Find the current project's memory directory.
+
     Returns None if no memory directory exists for this project.
     Does NOT fall back to other projects (privacy boundary)."""
     cwd = os.environ.get('CLAUDE_PROJECT_DIR', os.getcwd())
@@ -66,21 +66,21 @@ def get_project_memory_dir() -> Optional[str]:
 
 def check_disk() -> Optional[int]:
     """Check free space on the disk containing the home directory.
+
     Works cross-platform: macOS, Linux, Windows.
-    Returns free GB, or None if the home directory is unavailable
-    (e.g. on a headless CI runner without a real home dir)."""
+    Returns free GB, or None if the home directory is unavailable."""
     try:
         home = os.path.expanduser('~')
         free_gb = shutil.disk_usage(home).free // (2**30)
         return free_gb
     except (FileNotFoundError, PermissionError, OSError):
-        # Home dir not accessible — log and continue without disk check
         log.warning('cannot check disk space (home dir inaccessible)')
         return None
 
 
 def check_stale_libs(mem_dir: str) -> list[str]:
     """Return list of library names not updated today.
+
     Per-file OSError handling: individual unreadable files are skipped,
     but the scan continues for remaining libraries."""
     today = datetime.date.today()
@@ -121,14 +121,16 @@ def check_stale_libs(mem_dir: str) -> list[str]:
 
 def count_edits(text: str) -> int:
     """Count Edit/Write tool invocations in the full transcript.
+
     Matches structured tool-call JSON patterns to avoid false-positives
-    from ordinary English prose (e.g., 'Edit the file' in conversation).
-    Scans entire transcript — not truncated to tail."""
+    from ordinary English prose. Scans entire transcript."""
     return len(re.findall(r'"name":\s*"(?:Edit|Write)"', text))
 
 
 def main() -> None:
     raw = sys.stdin.read()
+
+    # Stop-hook contract: echo stdin to stdout so the harness can forward the payload
     sys.stdout.write(raw)
 
     # 1. Disk check — three-level: remind / warn / block
@@ -174,6 +176,7 @@ def main() -> None:
         else:
             stale = []
 
+    # Build warning message
     parts = []
     if is_complex:
         status_icons = ['X' if s in stale else 'O' for s in LIBS]
