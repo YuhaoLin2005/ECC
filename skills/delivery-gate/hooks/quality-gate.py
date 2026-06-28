@@ -128,7 +128,9 @@ def count_edits(text: str) -> int:
 
 def main() -> None:
     raw = sys.stdin.read()
-    sys.stdout.write(raw)
+    # Stop hooks write feedback to stderr, not stdout.
+    # Claude Code reads stderr as the hook's response message.
+    # Do NOT echo raw JSON to stdout — it would overwrite the blocking reason.
 
     # Resolve transcript: Stop hooks may receive raw text OR JSON with transcript_path.
     transcript = raw
@@ -150,6 +152,8 @@ def main() -> None:
         if disk_free < DISK_CRIT_GB:
             log.warning('Blocked: disk space at %dGB (<%dGB). Free space before continuing.',
                         disk_free, DISK_CRIT_GB)
+            log.warning('Blocked: disk space at %dGB (<%dGB). Free space before continuing.',
+                        disk_free, DISK_CRIT_GB)
             sys.exit(2)
         if disk_free < DISK_WARN_GB:
             log.warning('WARN: disk space at %dGB (<%dGB)', disk_free, DISK_WARN_GB)
@@ -169,7 +173,7 @@ def main() -> None:
         if m:
             hits.append(m.group(0)[:80])
     if hits:
-        log.warning('quality-gate: %s', hits)
+        log.warning('quality-gate: rationalization detected — %s', hits)
 
     # 4. Learning capture check
     mem_dir = get_project_memory_dir()
