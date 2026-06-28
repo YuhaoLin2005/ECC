@@ -55,7 +55,7 @@ def get_project_memory_dir() -> Optional[str]:
     Returns None if no memory directory exists for this project.
     Does NOT fall back to other projects (privacy boundary)."""
     cwd = os.environ.get('CLAUDE_PROJECT_DIR', os.getcwd())
-    safe = cwd.replace(':', '').replace('\\', '-').replace('/', '-')
+    safe = cwd.replace(':', '-').replace('\\', '-').replace('/', '-')
     mem = os.path.expanduser(f'~/.claude/projects/{safe}/memory')
     log.info('Looking for memory dir: cwd=%s -> %s', cwd, mem)
     if os.path.isdir(mem):
