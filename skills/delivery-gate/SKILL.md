@@ -47,14 +47,14 @@ cp skills/delivery-gate/hooks/quality-gate.py ~/.claude/scripts/
 Add this block to your project or global CLAUDE.md:
 
 ```markdown
-## 收尾铁律
+## Session-End Checklist (收尾铁律)
 
-复杂任务结束必须自动输出:
-1. 自审 — 矛盾/遗漏/未验证假设/美化
-2. 教学 — 为什么做/如何做/核心收益 (仅代码任务)
-3. 交付门 — 五库+磁盘
-4. 沉淀 — 新事实→persona | 翻车→growth-log
-5. 产出索引
+After complex tasks, verify before stopping:
+1. Self-Audit — contradictions, omissions, unverified assumptions, sugar-coating
+2. Teaching Output — why + how + core benefit (code tasks only)
+3. Delivery Gate — five libraries + disk space
+4. Capture — new facts→persona | failures→growth-log
+5. Output Index — record deliverable paths
 ```
 
 ### 4. Create memory libraries
@@ -63,7 +63,7 @@ See `memory/README.md` for the five-library setup.
 
 ## How It Works
 
-The hook receives the full transcript on stdin. It:
+The hook parses stdin (handles both raw transcript text and JSON with `transcript_path` for Claude Code Stop hooks). It:
 1. Scans for rationalization patterns (e.g., "this is a pre-existing issue", "skip tests for now")
 2. Counts Edit/Write tool invocations to detect complex tasks
 3. Checks if five learning libraries were modified today (filesystem mtime)
