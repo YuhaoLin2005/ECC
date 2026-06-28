@@ -38,7 +38,8 @@ LIBS = {
 
 MIN_CHARS = 40          # minimum transcript length to trigger checks
 COMPLEX_THRESHOLD = 3   # Edit/Write calls to classify as "complex task"
-DISK_WARN_GB = 50       # warn when free space below this
+DISK_REMIND_GB = 50     # remind when free space below this
+DISK_WARN_GB = 30       # warn when free space below this
 DISK_CRIT_GB = 15       # block stop when below this
 # ---- End Configuration ----
 
@@ -79,12 +80,15 @@ def check_disk() -> Optional[int]:
 
 
 def check_stale_libs(mem_dir: str) -> list[str]:
-    """Return list of library names not updated today."""
+    """Return list of library names not updated today.
+    Per-file OSError handling: individual unreadable files are skipped,
+    but the scan continues for remaining libraries. Only returns empty
+    list when the entire memory directory is inaccessible."""
     today = datetime.date.today()
     stale: list[str] = []
-    try:
-        for name, path in LIBS.items():
-            full = os.path.join(mem_dir, path)
+    for name, path in LIBS.items():
+        full = os.path.join(mem_dir, path)
+        try:
             if os.path.isdir(full):
                 has_today = False
                 # Use os.walk to handle nested subdirectories (e.g. growth-log/2026/06-26.md)
@@ -97,7 +101,7 @@ def check_stale_libs(mem_dir: str) -> list[str]:
                                 has_today = True
                                 break
                         except OSError:
-                            continue  # skip unreadable files
+                            continue  # skip unreadable individual files
                     if has_today:
                         break
                 if not has_today:
@@ -111,16 +115,19 @@ def check_stale_libs(mem_dir: str) -> list[str]:
                     stale.append(name)  # can't check → treat as stale
             else:
                 stale.append(name)
-    except OSError as e:
-        log.warning('cannot check stale libs in %s: %s', mem_dir, e)
-        return []  # inconclusive — don't block on filesystem errors
+        except OSError as e:
+            # Individual lib path inaccessible — log and treat as stale
+            log.warning('cannot access lib %s: %s', name, e)
+            stale.append(name)
     return stale
 
 
 def count_edits(text: str) -> int:
-    """Count Edit/Write tool invocations in the last assistant response."""
+    """Count Edit/Write tool invocations in the transcript.
+    Matches structured tool-call JSON patterns to avoid false-positives
+    from ordinary English prose (e.g., 'Edit the file' in conversation)."""
     tail = text[-8000:]
-    return len(re.findall(r'(?:Edit|Write)\s+', tail))
+    return len(re.findall(r'"name":\s*"(?:Edit|Write)"', tail))
 
 
 def main() -> None:
@@ -129,15 +136,17 @@ def main() -> None:
     # Stop-hook contract: echo stdin to stdout so the harness can forward the payload
     sys.stdout.write(raw)
 
-    # 1. Disk check FIRST — must always run, regardless of transcript length
+    # 1. Disk check — three-level: remind / warn / block
     disk_free = check_disk()
     if disk_free is not None:
         if disk_free < DISK_CRIT_GB:
-            log.warning('Blocked: disk space at %dGB (threshold: %dGB). Free space before continuing.',
+            log.warning('Blocked: disk space at %dGB (<%dGB). Free space before continuing.',
                         disk_free, DISK_CRIT_GB)
             sys.exit(2)
         if disk_free < DISK_WARN_GB:
-            log.warning('WARN: disk space %dGB free', disk_free)
+            log.warning('WARN: disk space at %dGB (<%dGB)', disk_free, DISK_WARN_GB)
+        elif disk_free < DISK_REMIND_GB:
+            log.info('Reminder: disk space at %dGB (<%dGB)', disk_free, DISK_REMIND_GB)
 
     # 2. Short session — skip remaining checks
     if len(raw) < MIN_CHARS:
@@ -181,10 +190,18 @@ def main() -> None:
         log.warning('\n'.join(parts))
 
     # 5. Block if complex task completed without learning capture
-    if is_complex and len(stale) >= len(LIBS):
-        log.warning('Blocked: complex task completed but no learning captured today.')
-        log.warning('Update at least one library (e.g. growth-log) before stopping.')
-        sys.exit(2)
+    # Previously blocked only if ALL 5 libraries stale — too lenient.
+    # Now: block if >=3 stale (most tasks update 2-3 libraries naturally).
+    # Also block if NO growth-log update after any code change.
+    if is_complex:
+        if len(stale) >= 3:
+            log.warning('Blocked: complex task but >=3 learning libs stale.')
+            log.warning(f'Stale: {", ".join(stale)}. Update before stopping.')
+            sys.exit(2)
+        if 'growth-log' in stale:
+            log.warning('Blocked: code changes made but no growth-log update.')
+            log.warning('Write growth-log before stopping (even if "no new learnings").')
+            sys.exit(2)
 
     sys.exit(0)
 
