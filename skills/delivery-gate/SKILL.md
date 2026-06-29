@@ -1,124 +1,126 @@
 ---
 name: delivery-gate
-description: Stop hook that blocks Claude from finishing until quality checks pass. Detects contradictions, omissions, unverified assumptions, rationalization patterns, stale learning logs, and low disk space. Complements verification-loop by checking thinking quality rather than just code quality.
+description: Stop hook that blocks Claude from finishing until quality checks pass. Detects rationalization patterns (surface text heuristics), stale learning logs (filesystem mtime), and low disk space. Complements self-audit by mechanically enforcing learning capture habits.
+version: 1.1.0
+metadata:
+  origin: ECC
 ---
 
-# Delivery Gate — Self-Audit Stop Hook
+# Delivery Gate — Mechanical Quality Gate for Claude Code
 
-A Stop hook that forces Claude to verify quality before it can finish. Unlike verification-loop (which checks build/test/lint), this system checks **thinking quality**: did Claude assume something untested? Did it rationalize skipping work? Did it skip documenting a lesson? Is disk space dangerously low?
+A **Stop hook** that checks three things before Claude can finish a session, using only **deterministic checks** — file modification timestamps, disk usage, and regex patterns on the transcript text. No AI inference.
 
-## When to Activate
+This is distinct from reasoning gates (like `self-audit`): delivery-gate checks machine-verifiable facts; self-audit checks output quality across four reasoning dimensions. Together they form defense in depth:
+- **delivery-gate**: "Was the learning library touched today? Is disk space safe?"
+- **self-audit**: "Is the file content correct, complete, and honest?"
 
-- Any project where you want Claude to learn from its mistakes over time
-- Long coding sessions where "done" often means "code works but thinking was sloppy"
-- Teams that want consistent quality standards across AI-assisted work
+This is the same pattern as CI pipeline gates — automated, deterministic checks that verify machine-readable facts rather than trusting self-reported status.
 
-## Installation
+## What It Checks
 
-### 1. Install the hook script
+| Check | Mechanism | On Hit |
+|-------|-----------|--------|
+| Rationalization patterns | Regex on transcript tail | **Warning only** (never blocks) |
+| Stale learning libraries | mtime on 5 configurable paths | Warning if some stale; **Block** if ALL stale + complex task |
+| Disk space < 50GB | `shutil.disk_usage` | Warning |
+| Disk space < 15GB | `shutil.disk_usage` | **Block** (exit 2) |
+
+Rationalization detection warns about patterns like "skip tests for now" and "pre-existing bug" — surface signals that thinking may have been cut short. It never blocks on its own, because regex heuristics can false-positive. The blocking conditions are only: disk critical OR all learning libraries untouched after a complex task.
+
+## Why
+
+Claude Code's built-in checks cover code quality (build → type → lint → test). But there's a different failure mode: the agent produces working code while the **session hygiene was neglected** — learning not captured, rationalized shortcuts, disk running out silently.
+
+Over many sessions of "ship and forget," the human hasn't grown. This hook enforces the habit: complex task → must touch learning libraries.
+
+## Install
 
 ```bash
-# From the ECC repo root (after cloning/forking):
-cp skills/delivery-gate/hooks/quality-gate.py ~/.claude/scripts/
+cp quality-gate.py ~/.claude/scripts/
 ```
 
-### 2. Configure in settings.json
-
+Add to `~/.claude/settings.json`:
 ```json
 {
   "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.claude/scripts/quality-gate.py",
-            "timeout": 5000
-          }
-        ]
-      }
-    ]
+    "Stop": [{
+      "hooks": [{
+        "type": "command",
+        "command": "python3 ~/.claude/scripts/quality-gate.py",
+        "timeout": 5000
+      }]
+    }]
   }
 }
 ```
 
-### 3. Add CLAUDE.md rules
+## Learning Libraries
 
-Add this block to your project or global CLAUDE.md:
+Create these files in your project's memory directory. The hook checks if at least one was updated today:
 
-```markdown
-## 收尾铁律
-
-复杂任务结束必须自动输出:
-1. 自审 — 矛盾/遗漏/未验证假设/美化
-2. 教学 — 为什么做/如何做/核心收益 (仅代码任务)
-3. 交付门 — 五库+磁盘
-4. 沉淀 — 新事实→persona | 翻车→growth-log
-5. 产出索引
+```
+memory/
+├── growth-log/          # Daily learning entries (directory)
+├── decisions/log.md     # Decision log
+├── output-index.md      # Index of session outputs
+├── ratings-tracker.md   # Skill ratings over time
+└── tooling_capabilities.md  # Known tools inventory
 ```
 
-### 4. Create memory libraries
+Customize the `LIBS` dict to match your own file structure.
 
-See `memory/README.md` for the five-library setup.
-
-## How It Works
-
-The hook receives the full transcript on stdin (handles both raw text and JSON with `transcript_path` for Claude Code Stop hooks). It:
-1. Detects rationalization patterns (e.g., "this is a pre-existing issue", "skip tests for now")
-2. Counts Edit/Write tool invocations to detect complex tasks
-3. Checks if five learning libraries were modified today (filesystem mtime)
-4. Checks home-directory filesystem disk space
-5. Blocks (exit 2) when complex tasks complete without learning capture, or disk is critically low
-
-## Customization
+## Configuration
 
 Edit `quality-gate.py`:
-- `RATIONALIZE` regex patterns — add your team's common excuses
-- `LIBS` dictionary — customize which files to check
-- `MIN_CHARS` — minimum transcript length to trigger checks
-- `DISK_WARN_GB` / `DISK_CRIT_GB` — adjust for your environment
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `RATIONALIZE` | 4 patterns | Regex patterns for rationalization detection |
+| `LIBS` | 5 libraries | Files/dirs to check for today's updates |
+| `COMPLEX_THRESHOLD` | 3 | Edit/Write calls to classify as complex |
+| `DISK_WARN_GB` | 50 | Warn below this |
+| `DISK_CRIT_GB` | 15 | Block below this |
 
 ## Examples
 
-### Normal session — no blocking
-
+**Simple session — allowed:**
 ```
-$ claude  # edits 2 files, updates growth-log
-...
-Claude tries to stop → hook runs:
-  edit_count=2 (< 3, not complex) → exit 0 (allowed)
+edit_count=1 (< 3, not complex) → exit 0
 ```
 
-### Complex task, learning captured — allowed
-
+**Complex task, learning captured — allowed:**
 ```
-$ claude  # edits 5 files, updates growth-log/2026-06-26.md
-...
-Claude tries to stop → hook runs:
-  edit_count=5 (complex) → checks LIBS → growth-log updated today → exit 0 (allowed)
+edit_count=5 (complex) → checks LIBS → growth-log updated today → exit 0
 ```
 
-### Complex task, no learning — BLOCKED
-
+**Complex task, no learning — BLOCKED:**
 ```
-$ claude  # edits 4 files, nothing written to memory
-...
-Claude tries to stop → hook runs:
-  edit_count=4 (complex) → checks LIBS → all 5 stale → exit 2 (blocked)
-  stderr: "Blocked: complex task completed but no learning captured today."
+edit_count=4 (complex) → checks LIBS → all 5 stale → exit 2
+stderr: "Blocked: complex task completed but no learning captured today."
 ```
 
-### Low disk space — BLOCKED regardless
-
+**Low disk space — BLOCKED:**
 ```
-$ claude  # any session, home filesystem at 12GB
-...
-Claude tries to stop → hook runs:
-  disk_free=12GB < 15GB critical → exit 2 (blocked)
-  stderr: "Blocked: disk space at 12GB (threshold: 15GB)."
+disk_free=12GB < 15GB critical → exit 2
+stderr: "Blocked: disk space at 12GB (threshold: 15GB)."
 ```
 
-## Related Skills
+## Limitations
 
-- `verification-loop` — Technical checks (build, type, lint, test). Different scope: code output vs learning capture.
-- `gateguard` — Same architecture (deterministic hook + pattern matching), different lifecycle point (PreToolUse vs Stop).
+The hook enforces the **habit** of touching learning libraries, not the **quality** of what was recorded. If `output-index.md` is updated but `growth-log` is skipped, the hook passes (1 of 5 libraries touched). This is by design: mechanical gates check machine-verifiable facts. For content quality verification, pair with `self-audit`.
+
+## Compatibility
+
+- Python 3.8+ (uses `from __future__ import annotations`)
+- Cross-platform: Windows, macOS, Linux
+- Zero dependencies beyond stdlib
+
+## Quality
+
+This code went through 4 rounds of automated code review (CodeRabbit + Greptile) with 9 real bugs found and fixed.
+
+## See Also
+
+- `self-audit` — Reasoning quality gate (completeness/consistency/groundedness/honesty)
+- `verification-loop` — Code quality checks (build/type/lint/test)
+- `gateguard` — PreToolUse safety gate
