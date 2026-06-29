@@ -1,7 +1,7 @@
 ---
 name: delivery-gate
 description: Stop hook that blocks Claude from finishing until quality checks pass. Detects rationalization patterns (surface text heuristics), stale learning logs (filesystem mtime), and low disk space. Complements self-audit by mechanically enforcing learning capture habits.
-version: 1.1.0
+version: 1.1.1
 metadata:
   origin: ECC
 ---
@@ -21,11 +21,11 @@ This is the same pattern as CI pipeline gates — automated, deterministic check
 | Check | Mechanism | On Hit |
 |-------|-----------|--------|
 | Rationalization patterns | Regex on transcript tail | **Warning only** (never blocks) |
-| Stale learning libraries | mtime on 5 configurable paths | Warning if some stale; **Block** if ALL stale + complex task |
+| Stale learning libraries | mtime on 5 configurable paths | Warning if some stale; **Block** if >=3 stale OR growth-log stale + complex task |
 | Disk space < 50GB | `shutil.disk_usage` | Warning |
 | Disk space < 15GB | `shutil.disk_usage` | **Block** (exit 2) |
 
-Rationalization detection warns about patterns like "skip tests for now" and "pre-existing bug" — surface signals that thinking may have been cut short. It never blocks on its own, because regex heuristics can false-positive. The blocking conditions are only: disk critical OR all learning libraries untouched after a complex task.
+Rationalization detection warns about patterns like "skip tests for now" and "pre-existing bug" — surface signals that thinking may have been cut short. It never blocks on its own, because regex heuristics can false-positive. The blocking conditions are: disk critical, `>=3 learning libs stale`, OR `growth-log` specifically stale (all require complex task >=3 edits).
 
 ## Why
 
