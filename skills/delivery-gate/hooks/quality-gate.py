@@ -22,8 +22,8 @@ from typing import Optional
 RATIONALIZE = [
     r'(?:this|that)\s+is\s+a\s+pre[- ]existing\s+(?:issue|bug)\b(?!\s+(?:that|which|and))',
     r'skipping\s+(?:tests?|lint|coverage|type[- ]check)\s+for\s+now',
-    r'(?:tests?|coverage)\s+(?:are|is)\s+(?:failing|broken)\s+but\s+(?:I|we)\'ll\s+(?:fix|address)',
-    r'(?:not\s+addressing|won\'t\s+fix|leaving)\s+the\s+(?:failing|broken)\s+(?:test|build)',
+    r'(?:tests?|coverage)\s+(?:are|is)\s+(?:failing|broken)\s+but\s+(?:I|we)\s+(?:\'ll|can|will)\s+(?:fix|address|resolve|handle)',
+    r'(?:not\s+addressing|won\'t\s+fix|leaving)\s+the\s+(?:failing|broken)\s+(?:tests?|builds?|integration\s+tests?)',
 ]
 
 LIBS = {
