@@ -17,6 +17,7 @@ const {
   countEditToolUses,
   countEdits,
   msgDiskBlock,
+  msgDiskRemind,
   msgDiskWarn,
   msgFirstTime,
   msgStaleBlock,
@@ -339,10 +340,17 @@ if (test('msgDiskBlock includes free GB and threshold GB', () => {
 })) passed++; else failed++;
 
 if (test('msgDiskWarn includes free GB and warn threshold', () => {
-  const msg = msgDiskWarn(30);
-  assert.ok(msg.includes('30.0GB'));
-  assert.ok(msg.includes('50GB'), 'should mention DISK_WARN_GB threshold');
+  const msg = msgDiskWarn(20);
+  assert.ok(msg.includes('20.0GB'));
+  assert.ok(msg.includes('30GB'), 'should mention DISK_WARN_GB threshold');
   assert.ok(msg.includes('Disk low'));
+})) passed++; else failed++;
+
+if (test('msgDiskRemind includes free GB and remind threshold', () => {
+  const msg = msgDiskRemind(35);
+  assert.ok(msg.includes('35.0GB'));
+  assert.ok(msg.includes('50GB'), 'should mention DISK_REMIND_GB threshold');
+  assert.ok(msg.includes('Reminder'));
 })) passed++; else failed++;
 
 if (test('msgFirstTime is first-time-user guidance', () => {

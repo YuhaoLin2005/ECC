@@ -25,7 +25,8 @@ const { execFileSync } = require('child_process');
 const os = require('os');
 
 // ── Configuration ──────────────────────────────────────────
-const DISK_WARN_GB = 50;
+const DISK_REMIND_GB = 50;
+const DISK_WARN_GB = 30;
 const DISK_CRIT_GB = 15;
 const COMPLEX_THRESHOLD = 3; // Edit/Write calls to classify as complex
 const STALE_THRESHOLD_COUNT = 3; // ≥ this many stale libs → block (strict mode)
@@ -163,6 +164,19 @@ function msgDiskBlock(gb) {
 }
 
 /**
+ * Build reminder message for moderately low disk space.
+ *
+ * @param {number} gb — current free GB
+ * @returns {string}
+ */
+function msgDiskRemind(gb) {
+  return [
+    `Reminder: ${gb.toFixed(1)}GB free (remind threshold: ${DISK_REMIND_GB}GB).`,
+    `Consider cleaning up temporary files and old downloads soon.`,
+  ].join('\n');
+}
+
+/**
  * Build warning message for low disk space.
  *
  * @param {number} gb — current free GB
@@ -170,9 +184,8 @@ function msgDiskBlock(gb) {
  */
 function msgDiskWarn(gb) {
   return [
-    `Disk low: ${gb.toFixed(1)}GB free (warn threshold: ${DISK_WARN_GB}GB)`,
-    `Consider cleaning up temporary files and old downloads soon.`,
-    `Current session can continue, but risk increases below ${DISK_CRIT_GB}GB.`,
+    `Disk low: ${gb.toFixed(1)}GB free (warn threshold: ${DISK_WARN_GB}GB).`,
+    `Clean up soon — risk increases below ${DISK_CRIT_GB}GB.`,
   ].join('\n');
 }
 
@@ -325,6 +338,9 @@ function checkDiskSpace() {
   if (freeGB < DISK_WARN_GB) {
     return { lines: [msgDiskWarn(freeGB)], blocked: false };
   }
+  if (freeGB < DISK_REMIND_GB) {
+    return { lines: [msgDiskRemind(freeGB)], blocked: false };
+  }
   return { lines: [], blocked: false };
 }
 
@@ -438,6 +454,7 @@ module.exports = {
   getDiskFreeGB,
   getNewestMtimeInDir,
   msgDiskBlock,
+  msgDiskRemind,
   msgDiskWarn,
   msgFirstTime,
   msgStaleBlock,
