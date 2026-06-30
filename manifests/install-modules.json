@@ -281,7 +281,6 @@
         "zed"
       ],
       "dependencies": [
-        "hooks-runtime",
         "platform-configs"
       ],
       "defaultInstall": true,
