@@ -48,19 +48,20 @@ To verify it's working:
 
 ## Learning Libraries
 
-The hook checks these 5 paths under `~/.claude/`:
+The hook checks these 5 paths under your memory directory:
 
 ```
-.claude/
-└── memory/
-    ├── growth-log/          # Daily learning entries (directory, recursive)
-    ├── decisions/log.md     # Decision log
-    ├── output-index.md      # Index of session outputs
-    ├── ratings-tracker.md   # Skill ratings over time
-    └── tooling_capabilities.md  # Known tools inventory
+{memoryDir}/
+├── growth-log/          # Daily learning entries (directory, recursive)
+├── decisions/log.md     # Decision log
+├── output-index.md      # Index of session outputs
+├── ratings-tracker.md   # Skill ratings over time
+└── tooling_capabilities.md  # Known tools inventory
 ```
 
-If at least one was modified today, the check passes. If you use different paths, edit the `LIBS` array in `scripts/hooks/delivery-gate.js`.
+**Memory directory resolution:** Checks `CLAUDE_PROJECT_DIR` for project-scoped memory (`~/.claude/projects/{hash}/memory/`), falls back to `~/.claude/memory/` for non-project sessions. This is automatic — no configuration needed.
+
+If at least one was modified today, the check passes. If you use different paths, edit the `LIBS` array in `scripts/hooks/delivery-gate.js` (paths are relative to the memory directory).
 
 ## Behavior by Session Type
 
@@ -110,7 +111,7 @@ The hook enforces the **habit** of touching learning libraries, not the **qualit
 ## Compatibility
 
 - Node.js 16+ (no npm dependencies — stdlib only)
-- Cross-platform: Windows (wmic/PowerShell fallback), macOS/Linux (df)
+- Cross-platform: Windows (wmic/PowerShell fallback), macOS/Linux (GNU df -BG + POSIX df -Pk fallback)
 - Zero external dependencies
 
 ## See Also

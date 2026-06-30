@@ -354,7 +354,7 @@ if (test('msgDiskRemind includes free GB and remind threshold', () => {
 })) passed++; else failed++;
 
 if (test('msgFirstTime is first-time-user guidance', () => {
-  const msg = msgFirstTime();
+  const msg = msgFirstTime('/home/user/.claude/memory');
   assert.ok(msg.includes('Welcome'));
   assert.ok(msg.includes('learning libraries'));
   assert.ok(msg.includes('growth-log'));

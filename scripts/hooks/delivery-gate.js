@@ -35,14 +35,32 @@ const MODE = (process.env.DELIVERY_GATE_MODE || 'strict').toLowerCase();
 const MAX_TRANSCRIPT_BYTES = 10 * 1024 * 1024; // 10MB — refuse to parse larger transcripts
 const EDIT_TOOL_NAMES = new Set(['Write', 'Edit', 'MultiEdit']);
 
-// Learning library paths (relative to ~/.claude/)
+// Learning library paths (relative to memory directory — resolved via getMemoryDir())
 const LIBS = [
-  '.claude/memory/growth-log',
-  '.claude/memory/decisions/log.md',
-  '.claude/memory/output-index.md',
-  '.claude/memory/ratings-tracker.md',
-  '.claude/memory/tooling_capabilities.md',
+  'growth-log',
+  'decisions/log.md',
+  'output-index.md',
+  'ratings-tracker.md',
+  'tooling_capabilities.md',
 ];
+
+// ── Memory directory resolution ──────────────────────────────
+
+/**
+ * Resolve the learning library base directory.
+ * Checks CLAUDE_PROJECT_DIR for project-scoped memory first,
+ * falls back to ~/.claude/memory/ for non-project sessions.
+ *
+ * @returns {string} Absolute path to the memory directory
+ */
+function getMemoryDir() {
+  const projectDir = process.env.CLAUDE_PROJECT_DIR;
+  if (projectDir) {
+    const safe = projectDir.replace(/:/g, '-').replace(/\\/g, '-').replace(/\//g, '-');
+    return path.join(os.homedir(), '.claude', 'projects', safe, 'memory');
+  }
+  return path.join(os.homedir(), '.claude', 'memory');
+}
 
 // ── Disk space ─────────────────────────────────────────────
 
@@ -76,12 +94,19 @@ function getDiskFreeGB() {
       const free = Number(psResult.trim());
       if (!isNaN(free)) return free / (1024 * 1024 * 1024);
     } else {
-      // Unix: df -BG on home directory (argument array, no shell)
-      const result = execFileSync('df', ['-BG', homedir], { encoding: 'utf8', timeout: 5000 });
-      const cols = result.split('\n')[1]?.split(/\s+/);
-      if (cols && cols.length >= 4) {
-        const free = parseInt(cols[3], 10);
-        if (!isNaN(free)) return free;
+      // Unix: GNU df -BG, POSIX df -Pk fallback for macOS/BSD
+      const unixCmds = [['-BG'], ['-Pk']];
+      for (const args of unixCmds) {
+        try {
+          const result = execFileSync('df', [...args, homedir], { encoding: 'utf8', timeout: 5000 });
+          const cols = result.split('\n')[1]?.split(/\s+/);
+          if (cols && cols.length >= 4) {
+            const free = parseInt(cols[3], 10);
+            if (!isNaN(free)) {
+              return args[0] === '-Pk' ? free / (1024 * 1024) : free; // -Pk returns KB → GB
+            }
+          }
+        } catch { /* try next command */ }
       }
     }
   } catch {
@@ -125,14 +150,14 @@ function getNewestMtimeInDir(dirPath) {
  * Check freshness of all learning libraries.
  * Uses .map() for immutable array construction (no in-place .push()).
  *
- * @param {string} homedir — user home directory
- * @param {number} now     — current timestamp (Date.now())
+ * @param {string} memoryDir — absolute path to the memory directory
+ * @param {number} now       — current timestamp (Date.now())
  * @returns {Array<{path: string, mtime: number, hoursAgo: number, stale: boolean}>}
  */
-function checkLibFreshness(homedir, now) {
+function checkLibFreshness(memoryDir, now) {
   const oneDayHours = ONE_DAY_MS / (1000 * 60 * 60);
   return LIBS.map(lib => {
-    const full = path.join(homedir, lib);
+    const full = path.join(memoryDir, lib);
     let mtime = 0;
     try {
       const stat = fs.statSync(full);
@@ -143,7 +168,7 @@ function checkLibFreshness(homedir, now) {
       mtime = 0; // Missing → stale
     }
     const hoursAgo = mtime > 0 ? (now - mtime) / (1000 * 60 * 60) : Infinity;
-    return { path: lib, mtime, hoursAgo, stale: hoursAgo > oneDayHours };
+    return { path: full, mtime, hoursAgo, stale: hoursAgo > oneDayHours };
   });
 }
 
@@ -190,14 +215,15 @@ function msgDiskWarn(gb) {
 }
 
 /**
- * Build guidance message for first-time users (no ~/.claude/memory/ dir).
+ * Build guidance message for first-time users.
  *
+ * @param {string} memoryDir — absolute path to the expected memory directory
  * @returns {string}
  */
-function msgFirstTime() {
+function msgFirstTime(memoryDir) {
   return [
     `Welcome! No learning libraries found — normal for new setups.`,
-    `Create .claude/memory/growth-log/ in your home directory. See /growth-log.`,
+    `Create ${path.join(memoryDir, 'growth-log')} in your home directory. See /growth-log.`,
   ].join('\n');
 }
 
@@ -415,20 +441,20 @@ function run(raw, options = {}) {
 
   const homedir = os.homedir();
   const now = Date.now();
+  const memoryDir = getMemoryDir();
 
   // 1. Disk check (fail-open: null → skip, returned as empty lines)
   const { lines: diskLines, blocked: diskBlocked } = checkDiskSpace();
 
-  // 2. First-time user check (~/.claude/memory/ existence)
-  const memoryDir = path.join(homedir, '.claude', 'memory');
+  // 2. First-time user check
   if (!fs.existsSync(memoryDir)) {
-    const allLines = [...diskLines, msgFirstTime()];
+    const allLines = [...diskLines, msgFirstTime(memoryDir)];
     const stderr = allLines.map(l => `[delivery-gate] ${l}\n`).join('');
     return { exitCode: diskBlocked ? 2 : 0, stderr };
   }
 
-  // 3. Library freshness
-  const libResults = checkLibFreshness(homedir, now);
+  // 3. Library freshness (resolves paths under memoryDir)
+  const libResults = checkLibFreshness(memoryDir, now);
 
   // 4. Complexity check (reads transcript via Stop payload's transcript_path)
   const editCount = countEdits(input);
@@ -452,6 +478,7 @@ module.exports = {
   countEditToolUses,
   countEdits,
   getDiskFreeGB,
+  getMemoryDir,
   getNewestMtimeInDir,
   msgDiskBlock,
   msgDiskRemind,
