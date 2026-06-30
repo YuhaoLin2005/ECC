@@ -156,15 +156,9 @@ if (test('respects depth limit (depth > 10 returns 0)', () => {
 console.log('\ncountEdits: transcript file parsing');
 console.log('====================================\n');
 
-let tmpDir;
-try {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'delivery-gate-test-'));
-} catch {
-  tmpDir = null;
-}
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'delivery-gate-test-'));
 
 function writeTranscript(filename, lines) {
-  if (!tmpDir) return null;
   const f = path.join(tmpDir, filename);
   fs.writeFileSync(f, lines.join('\n') + '\n', 'utf8');
   return f;
@@ -180,63 +174,61 @@ if (test('returns 0 when transcript_path points to nonexistent file', () => {
   assert.strictEqual(countEdits({ transcript_path: '/nonexistent/path/transcript.jsonl' }), 0);
 })) passed++; else failed++;
 
-if (tmpDir) {
-  if (test('counts Write/Edit/MultiEdit in JSONL transcript', () => {
-    const f = writeTranscript('mixed.jsonl', [
-      JSON.stringify({ type: 'tool_use', name: 'Write', tool_input: { file_path: '/a.ts' } }),
-      JSON.stringify({ type: 'tool_use', name: 'Read', tool_input: { file_path: '/b.ts' } }),
-      JSON.stringify({ type: 'tool_use', name: 'Edit', tool_input: { file_path: '/c.ts' } }),
-      JSON.stringify({ type: 'tool_use', name: 'MultiEdit', tool_input: { edits: [{ file_path: '/d.ts' }] } }),
-    ]);
-    assert.strictEqual(countEdits({ transcript_path: f }), 3);
-  })) passed++; else failed++;
+if (test('counts Write/Edit/MultiEdit in JSONL transcript', () => {
+  const f = writeTranscript('mixed.jsonl', [
+    JSON.stringify({ type: 'tool_use', name: 'Write', tool_input: { file_path: '/a.ts' } }),
+    JSON.stringify({ type: 'tool_use', name: 'Read', tool_input: { file_path: '/b.ts' } }),
+    JSON.stringify({ type: 'tool_use', name: 'Edit', tool_input: { file_path: '/c.ts' } }),
+    JSON.stringify({ type: 'tool_use', name: 'MultiEdit', tool_input: { edits: [{ file_path: '/d.ts' }] } }),
+  ]);
+  assert.strictEqual(countEdits({ transcript_path: f }), 3);
+})) passed++; else failed++;
 
-  if (test('returns 0 for transcript with only non-edit tools', () => {
-    const f = writeTranscript('no-edits.jsonl', [
-      JSON.stringify({ type: 'tool_use', name: 'Read' }),
-      JSON.stringify({ type: 'tool_use', name: 'Grep' }),
-      JSON.stringify({ type: 'tool_use', name: 'Bash' }),
-    ]);
-    assert.strictEqual(countEdits({ transcript_path: f }), 0);
-  })) passed++; else failed++;
+if (test('returns 0 for transcript with only non-edit tools', () => {
+  const f = writeTranscript('no-edits.jsonl', [
+    JSON.stringify({ type: 'tool_use', name: 'Read' }),
+    JSON.stringify({ type: 'tool_use', name: 'Grep' }),
+    JSON.stringify({ type: 'tool_use', name: 'Bash' }),
+  ]);
+  assert.strictEqual(countEdits({ transcript_path: f }), 0);
+})) passed++; else failed++;
 
-  if (test('skips blank lines and invalid JSON gracefully', () => {
-    const f = writeTranscript('messy.jsonl', [
-      '',
-      'not valid json at all',
-      JSON.stringify({ type: 'tool_use', name: 'Write' }),
-      '',
-      JSON.stringify({ type: 'tool_use', name: 'Edit' }),
-    ]);
-    assert.strictEqual(countEdits({ transcript_path: f }), 2);
-  })) passed++; else failed++;
+if (test('skips blank lines and invalid JSON gracefully', () => {
+  const f = writeTranscript('messy.jsonl', [
+    '',
+    'not valid json at all',
+    JSON.stringify({ type: 'tool_use', name: 'Write' }),
+    '',
+    JSON.stringify({ type: 'tool_use', name: 'Edit' }),
+  ]);
+  assert.strictEqual(countEdits({ transcript_path: f }), 2);
+})) passed++; else failed++;
 
-  if (test('counts edits in assistant JSONL format (nested content blocks)', () => {
-    const f = writeTranscript('assistant.jsonl', [
-      JSON.stringify({
-        type: 'assistant',
-        message: {
-          content: [
-            { type: 'tool_use', name: 'Write', input: { file_path: '/x.ts' } },
-            { type: 'tool_use', name: 'Edit', input: { file_path: '/y.ts' } },
-          ]
-        }
-      }),
-    ]);
-    assert.strictEqual(countEdits({ transcript_path: f }), 2);
-  })) passed++; else failed++;
+if (test('counts edits in assistant JSONL format (nested content blocks)', () => {
+  const f = writeTranscript('assistant.jsonl', [
+    JSON.stringify({
+      type: 'assistant',
+      message: {
+        content: [
+          { type: 'tool_use', name: 'Write', input: { file_path: '/x.ts' } },
+          { type: 'tool_use', name: 'Edit', input: { file_path: '/y.ts' } },
+        ]
+      }
+    }),
+  ]);
+  assert.strictEqual(countEdits({ transcript_path: f }), 2);
+})) passed++; else failed++;
 
-  if (test('handles mixed assistant and flat entries in same transcript', () => {
-    const f = writeTranscript('mixed-format.jsonl', [
-      JSON.stringify({ type: 'tool_use', name: 'Write' }),
-      JSON.stringify({
-        type: 'assistant',
-        message: { content: [{ type: 'tool_use', name: 'Edit', input: {} }] }
-      }),
-    ]);
-    assert.strictEqual(countEdits({ transcript_path: f }), 2);
-  })) passed++; else failed++;
-}
+if (test('handles mixed assistant and flat entries in same transcript', () => {
+  const f = writeTranscript('mixed-format.jsonl', [
+    JSON.stringify({ type: 'tool_use', name: 'Write' }),
+    JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', name: 'Edit', input: {} }] }
+    }),
+  ]);
+  assert.strictEqual(countEdits({ transcript_path: f }), 2);
+})) passed++; else failed++;
 
 // ── checkStaleLibraries: block/warn logic ──────────────────────
 

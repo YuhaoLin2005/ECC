@@ -9,9 +9,9 @@
  * Returns: { exitCode: 0|2, stderr?: string }
  *
  * Exit codes: 0 = pass, 2 = block
- *   - Disk critical (&lt;15GB) always blocks
- *   - Complex session (&ge;3 edits) + &ge;3 learning libs stale &rarr; blocks (strict mode)
- *   - Complex session + growth-log stale &rarr; blocks (strict mode)
+ *   - Disk critical (<15GB) always blocks
+ *   - Complex session (≥3 edits) + ≥3 learning libs stale → blocks (strict mode)
+ *   - Complex session + growth-log stale → blocks (strict mode)
  *   - Set DELIVERY_GATE_MODE=minimal to only block on disk critical
  *
  * @module delivery-gate
@@ -21,14 +21,14 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const os = require('os');
 
 // ── Configuration ──────────────────────────────────────────
 const DISK_WARN_GB = 50;
 const DISK_CRIT_GB = 15;
 const COMPLEX_THRESHOLD = 3; // Edit/Write calls to classify as complex
-const STALE_THRESHOLD_COUNT = 3; // &ge; this many stale libs &rarr; block (strict mode)
+const STALE_THRESHOLD_COUNT = 3; // ≥ this many stale libs → block (strict mode)
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const MODE = (process.env.DELIVERY_GATE_MODE || 'strict').toLowerCase();
 const MAX_TRANSCRIPT_BYTES = 10 * 1024 * 1024; // 10MB — refuse to parse larger transcripts
@@ -45,29 +45,38 @@ const LIBS = [
 
 // ── Disk space ─────────────────────────────────────────────
 
+/**
+ * Get free disk space on the home drive, in GB.
+ * Uses execFileSync with argument arrays — no shell interpolation.
+ * Platform support: wmic + PowerShell fallback (Windows), df -BG (Unix).
+ *
+ * @returns {number|null} Free GB, or null if the check fails (fail-open)
+ */
 function getDiskFreeGB() {
   const homedir = os.homedir();
   try {
     if (process.platform === 'win32') {
       const drive = homedir[0].toUpperCase();
-      // Primary: wmic
-      const result = execSync(
-        `wmic logicaldisk where "Caption='${drive}:'" get FreeSpace /value`,
+      // Primary: wmic (argument array, no shell)
+      const result = execFileSync(
+        'wmic',
+        ['logicaldisk', 'where', `Caption='${drive}:'`, 'get', 'FreeSpace', '/value'],
         { encoding: 'utf8', timeout: 5000, windowsHide: true }
       );
       const match = result.match(/FreeSpace=(\d+)/);
       if (match) return Number(match[1]) / (1024 * 1024 * 1024);
 
-      // Fallback: PowerShell
-      const psResult = execSync(
-        `powershell -NoProfile -Command "(Get-PSDrive ${drive}).Free"`,
+      // Fallback: PowerShell (argument array, no shell)
+      const psResult = execFileSync(
+        'powershell',
+        ['-NoProfile', '-Command', `(Get-PSDrive ${drive}).Free`],
         { encoding: 'utf8', timeout: 5000, windowsHide: true }
       );
       const free = Number(psResult.trim());
       if (!isNaN(free)) return free / (1024 * 1024 * 1024);
     } else {
-      // Unix: df -BG on home directory (not root /)
-      const result = execSync(`df -BG "${homedir}"`, { encoding: 'utf8', timeout: 5000 });
+      // Unix: df -BG on home directory (argument array, no shell)
+      const result = execFileSync('df', ['-BG', homedir], { encoding: 'utf8', timeout: 5000 });
       const cols = result.split('\n')[1]?.split(/\s+/);
       if (cols && cols.length >= 4) {
         const free = parseInt(cols[3], 10);
@@ -75,7 +84,7 @@ function getDiskFreeGB() {
       }
     }
   } catch {
-    // Fail-open: can't determine disk space &rarr; don't block
+    // Fail-open: can't determine disk space → don't block
     return null;
   }
   return null;
@@ -83,6 +92,13 @@ function getDiskFreeGB() {
 
 // ── Library freshness ──────────────────────────────────────
 
+/**
+ * Recursively find the newest mtime (ms) among all files in a directory.
+ * Skips dotfiles and traverses subdirectories.
+ *
+ * @param {string} dirPath — absolute path to the directory
+ * @returns {number} Newest mtimeMs, or 0 if directory is empty or inaccessible
+ */
 function getNewestMtimeInDir(dirPath) {
   let newest = 0;
   try {
@@ -99,14 +115,22 @@ function getNewestMtimeInDir(dirPath) {
       }
     }
   } catch {
-    return 0; // Directory doesn't exist &rarr; stale
+    return 0; // Directory doesn't exist → stale
   }
   return newest;
 }
 
+/**
+ * Check freshness of all learning libraries.
+ * Uses .map() for immutable array construction (no in-place .push()).
+ *
+ * @param {string} homedir — user home directory
+ * @param {number} now     — current timestamp (Date.now())
+ * @returns {Array<{path: string, mtime: number, hoursAgo: number, stale: boolean}>}
+ */
 function checkLibFreshness(homedir, now) {
-  const results = [];
-  for (const lib of LIBS) {
+  const oneDayHours = ONE_DAY_MS / (1000 * 60 * 60);
+  return LIBS.map(lib => {
     const full = path.join(homedir, lib);
     let mtime = 0;
     try {
@@ -115,17 +139,21 @@ function checkLibFreshness(homedir, now) {
         ? getNewestMtimeInDir(full)
         : stat.mtimeMs;
     } catch {
-      mtime = 0; // Missing &rarr; stale
+      mtime = 0; // Missing → stale
     }
     const hoursAgo = mtime > 0 ? (now - mtime) / (1000 * 60 * 60) : Infinity;
-    const oneDayHours = ONE_DAY_MS / (1000 * 60 * 60);
-    results.push({ path: lib, mtime, hoursAgo, stale: hoursAgo > oneDayHours });
-  }
-  return results;
+    return { path: lib, mtime, hoursAgo, stale: hoursAgo > oneDayHours };
+  });
 }
 
 // ── Message builders ───────────────────────────────────────
 
+/**
+ * Build block message for critically low disk space.
+ *
+ * @param {number} gb — current free GB
+ * @returns {string}
+ */
 function msgDiskBlock(gb) {
   return [
     `DISK CRITICAL: ${gb.toFixed(1)}GB free (threshold: ${DISK_CRIT_GB}GB)`,
@@ -134,6 +162,12 @@ function msgDiskBlock(gb) {
   ].join('\n');
 }
 
+/**
+ * Build warning message for low disk space.
+ *
+ * @param {number} gb — current free GB
+ * @returns {string}
+ */
 function msgDiskWarn(gb) {
   return [
     `Disk low: ${gb.toFixed(1)}GB free (warn threshold: ${DISK_WARN_GB}GB)`,
@@ -142,6 +176,11 @@ function msgDiskWarn(gb) {
   ].join('\n');
 }
 
+/**
+ * Build guidance message for first-time users (no ~/.claude/memory/ dir).
+ *
+ * @returns {string}
+ */
 function msgFirstTime() {
   return [
     `Welcome! No learning libraries found — normal for new setups.`,
@@ -149,6 +188,13 @@ function msgFirstTime() {
   ].join('\n');
 }
 
+/**
+ * Build block message for stale learning libraries after a complex session.
+ *
+ * @param {string[]} stalePaths — paths of stale libraries
+ * @param {number} editCount    — number of edit tool calls in the session
+ * @returns {string}
+ */
 function msgStaleBlock(stalePaths, editCount) {
   const s = stalePaths.length === 1 ? 'y' : 'ies';
   return [
@@ -158,6 +204,12 @@ function msgStaleBlock(stalePaths, editCount) {
   ].join('\n');
 }
 
+/**
+ * Build warning message for stale learning libraries.
+ *
+ * @param {string[]} stalePaths — paths of stale libraries
+ * @returns {string}
+ */
 function msgStaleWarn(stalePaths) {
   const s = stalePaths.length === 1 ? 'y' : 'ies';
   return [
@@ -213,23 +265,35 @@ function countEditToolUses(value, depth = 0) {
  * Validates transcript_path before parsing: resolves to absolute path,
  * checks isFile() and enforces MAX_TRANSCRIPT_BYTES. Parses each line
  * as JSON and recursively counts tool_use entries.
+ *
+ * @param {object} input — parsed Stop event payload
+ * @returns {number}
  */
 function countEdits(input) {
   const transcriptPath = input?.transcript_path;
   if (!transcriptPath) return 0;
 
   // Validate transcript_path before reading
+  let resolved;
   try {
-    const resolved = path.resolve(transcriptPath);
+    resolved = path.resolve(transcriptPath);
     const stat = fs.statSync(resolved);
     if (!stat.isFile()) return 0;
-    if (stat.size > MAX_TRANSCRIPT_BYTES) return 0;
+    if (stat.size > MAX_TRANSCRIPT_BYTES) {
+      process.stderr.write(
+        `[delivery-gate] Transcript too large ` +
+        `(${(stat.size / 1024 / 1024).toFixed(1)}MB > ${MAX_TRANSCRIPT_BYTES / 1024 / 1024}MB), ` +
+        `skipping edit count\n`
+      );
+      return 0;
+    }
   } catch {
     return 0; // Fail-open: can't stat transcript
   }
 
   try {
-    const content = fs.readFileSync(transcriptPath, 'utf8');
+    // Use resolved path (not original) — both validated above via statSync
+    const content = fs.readFileSync(resolved, 'utf8');
     let count = 0;
     for (const line of content.split('\n')) {
       if (!line.trim()) continue;
@@ -239,8 +303,68 @@ function countEdits(input) {
     }
     return count;
   } catch {
-    return 0; // Fail-open: can't read transcript &rarr; assume simple session
+    return 0; // Fail-open: can't read transcript → assume simple session
   }
+}
+
+// ── Quality gate helpers ───────────────────────────────────
+
+/**
+ * Check available disk space against warning and critical thresholds.
+ * Calls getDiskFreeGB() internally; fail-open (null) returns empty lines.
+ *
+ * @returns {{ lines: string[], blocked: boolean }}
+ */
+function checkDiskSpace() {
+  const freeGB = getDiskFreeGB();
+  if (freeGB === null) return { lines: [], blocked: false };
+
+  if (freeGB < DISK_CRIT_GB) {
+    return { lines: [msgDiskBlock(freeGB)], blocked: true };
+  }
+  if (freeGB < DISK_WARN_GB) {
+    return { lines: [msgDiskWarn(freeGB)], blocked: false };
+  }
+  return { lines: [], blocked: false };
+}
+
+/**
+ * Determine whether to block or warn based on stale learning libraries.
+ * Applies strict vs minimal mode and simple vs complex session thresholds.
+ *
+ * @param {Array<{path: string, stale: boolean, hoursAgo: number}>} libResults
+ * @param {number} editCount — number of edit tool calls in the session
+ * @returns {{ lines: string[], blocked: boolean }}
+ */
+function checkStaleLibraries(libResults, editCount) {
+  const stalePaths = libResults.filter(r => r.stale).map(r => r.path);
+  if (stalePaths.length === 0) return { lines: [], blocked: false };
+
+  const isComplex = editCount >= COMPLEX_THRESHOLD;
+
+  if (isComplex && MODE !== 'minimal') {
+    // Strict mode (default): block if ≥3 libs stale or growth-log specifically stale
+    const growthLog = libResults.find(r => r.path.includes('growth-log'));
+    const growthLogStale = growthLog && growthLog.stale;
+
+    if (stalePaths.length >= STALE_THRESHOLD_COUNT || growthLogStale) {
+      return { lines: [msgStaleBlock(stalePaths, editCount)], blocked: true };
+    }
+  } else if (isComplex) {
+    // Minimal mode: warn only
+    return { lines: [msgStaleWarn(stalePaths)], blocked: false };
+  } else {
+    // Simple session — quick growth-log reminder if it's the stalest
+    const growthLog = libResults.find(r => r.path.includes('growth-log'));
+    if (growthLog && growthLog.stale) {
+      return {
+        lines: [`Quick reminder: growth-log hasn't been updated in ${growthLog.hoursAgo.toFixed(0)}h.`],
+        blocked: false
+      };
+    }
+  }
+
+  return { lines: [], blocked: false };
 }
 
 // ── Main hook ──────────────────────────────────────────────
@@ -267,7 +391,6 @@ function run(raw, options = {}) {
       input = JSON.parse(raw);
     }
   } catch {
-    // Malformed JSON &rarr; fail-open (don't block on unparseable input)
     return {
       exitCode: 0,
       stderr: '[delivery-gate] Could not parse stdin JSON, skipping (fail-open)\n'
@@ -276,65 +399,47 @@ function run(raw, options = {}) {
 
   const homedir = os.homedir();
   const now = Date.now();
-  const lines = [];
-  let blocked = false;
 
-  // 1. Disk check (fail-open: null &rarr; skip)
-  const freeGB = getDiskFreeGB();
-  if (freeGB !== null) {
-    if (freeGB < DISK_CRIT_GB) {
-      lines.push(msgDiskBlock(freeGB));
-      blocked = true; // Disk critical always blocks
-    } else if (freeGB < DISK_WARN_GB) {
-      lines.push(msgDiskWarn(freeGB));
-    }
-  }
+  // 1. Disk check (fail-open: null → skip, returned as empty lines)
+  const { lines: diskLines, blocked: diskBlocked } = checkDiskSpace();
 
   // 2. First-time user check (~/.claude/memory/ existence)
   const memoryDir = path.join(homedir, '.claude', 'memory');
   if (!fs.existsSync(memoryDir)) {
-    lines.push(msgFirstTime());
-    // First-time users still get blocked if disk is critical
-    const stderr = lines.map(l => `[delivery-gate] ${l}\n`).join('');
-    return { exitCode: blocked ? 2 : 0, stderr };
+    const allLines = [...diskLines, msgFirstTime()];
+    const stderr = allLines.map(l => `[delivery-gate] ${l}\n`).join('');
+    return { exitCode: diskBlocked ? 2 : 0, stderr };
   }
 
   // 3. Library freshness
   const libResults = checkLibFreshness(homedir, now);
-  const stalePaths = libResults.filter(r => r.stale).map(r => r.path);
 
   // 4. Complexity check (reads transcript via Stop payload's transcript_path)
   const editCount = countEdits(input);
-  const isComplex = editCount >= COMPLEX_THRESHOLD;
 
   // 5. Stale library handling (strict mode: block on complex sessions)
-  if (stalePaths.length > 0) {
-    if (isComplex && MODE !== 'minimal') {
-      // Strict mode (default): block if &ge;3 libs stale or growth-log specifically stale
-      const growthLog = libResults.find(r => r.path.includes('growth-log'));
-      const growthLogStale = growthLog && growthLog.stale;
+  const { lines: staleLines, blocked: staleBlocked } = checkStaleLibraries(libResults, editCount);
 
-      if (stalePaths.length >= STALE_THRESHOLD_COUNT || growthLogStale) {
-        lines.push(msgStaleBlock(stalePaths, editCount));
-        blocked = true;
-      }
-    } else if (isComplex) {
-      // Minimal mode: warn only
-      lines.push(msgStaleWarn(stalePaths));
-    } else {
-      // Simple session — just a quick growth-log reminder if it's the stalest
-      const growthLog = libResults.find(r => r.path.includes('growth-log'));
-      if (growthLog && growthLog.stale) {
-        lines.push(`Quick reminder: growth-log hasn't been updated in ${growthLog.hoursAgo.toFixed(0)}h.`);
-      }
-    }
-  }
+  // 6. Combine and output
+  const allLines = [...diskLines, ...staleLines];
+  if (allLines.length === 0) return { exitCode: 0 };
 
-  // 6. Output
-  if (lines.length === 0) return { exitCode: 0 };
-
-  const stderr = lines.map(l => `[delivery-gate] ${l}\n`).join('');
-  return { exitCode: blocked ? 2 : 0, stderr };
+  const stderr = allLines.map(l => `[delivery-gate] ${l}\n`).join('');
+  return { exitCode: (diskBlocked || staleBlocked) ? 2 : 0, stderr };
 }
 
-module.exports = { run };
+module.exports = {
+  run,
+  checkDiskSpace,
+  checkStaleLibraries,
+  checkLibFreshness,
+  countEditToolUses,
+  countEdits,
+  getDiskFreeGB,
+  getNewestMtimeInDir,
+  msgDiskBlock,
+  msgDiskWarn,
+  msgFirstTime,
+  msgStaleBlock,
+  msgStaleWarn,
+};

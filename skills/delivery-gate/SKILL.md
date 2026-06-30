@@ -104,7 +104,7 @@ Together: delivery-gate checks the *habit*, growth-log teaches the *content*, se
 
 ## Limitations
 
-The hook enforces the **habit** of touching learning libraries, not the **quality** of what was recorded. If `output-index.md` is updated but `growth-log` is skipped, the hook passes (1 of 5 libraries touched). This is by design — mechanical gates check machine-verifiable facts. For content quality, pair with `self-audit`.
+The hook enforces the **habit** of touching learning libraries, not the **quality** of what was recorded. In strict mode, a complex session still blocks if `growth-log` is stale — touching other libraries satisfies the general stale-count rule but not the growth-log-specific rule. In minimal mode, all library checks are warnings only. This is by design — mechanical gates check machine-verifiable facts. For content quality, pair with `self-audit`.
 
 ## Compatibility
 
