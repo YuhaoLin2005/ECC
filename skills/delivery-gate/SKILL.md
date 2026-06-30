@@ -19,7 +19,8 @@ metadata:
 | Check | Mechanism | On Hit |
 |-------|-----------|--------|
 | Disk space < 15GB | `wmic` (Windows) / `df` (Unix) | **Block** (exit 2) |
-| Disk space < 50GB | `wmic` (Windows) / `df` (Unix) | Warning |
+| Disk space < 30GB | `wmic` (Windows) / `df` (Unix) | Warning |
+| Disk space < 50GB | `wmic` (Windows) / `df` (Unix) | Reminder |
 | ≥3 learning libs stale (strict mode) | Filesystem mtime | **Block** (exit 2) |
 | growth-log stale + complex task (strict mode) | Filesystem mtime | **Block** (exit 2) |
 | Any libs stale, non-complex task | Filesystem mtime | Warning |
