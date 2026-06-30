@@ -1,13 +1,14 @@
 /**
  * Delivery Gate — Mechanical quality gate that runs at session Stop.
  *
- * Checks (deterministic only, no AI inference):
- * 1. Disk space (platform commands — wmic on Windows, df on Unix)
- * 2. Learning library freshness (filesystem mtime)
- * 3. Growth-log staleness (for complex sessions, strict mode)
+ * Zero-config auto-trigger via Stop hook (hooks.json).
+ * Checks disk space and learning library freshness on every response.
  *
- * First-time users (no memory/ dir) are guided, not blocked.
- * Disk check failures are fail-open (don't block on infra issues).
+ * Called by run-with-flags.js as: module.exports.run(raw, options)
+ * Contract: run(rawString, { hookId, pluginRoot, scriptPath, truncated, maxStdin })
+ * Returns: { exitCode: 0|2, stderr?: string }
+ *
+ * Exit codes: 0 = pass/fail-open, 2 = block (disk critical only)
  *
  * @module delivery-gate
  */
@@ -22,7 +23,7 @@ const os = require('os');
 // ── Configuration ──────────────────────────────────────────
 const DISK_WARN_GB = 50;
 const DISK_CRIT_GB = 15;
-const COMPLEX_THRESHOLD = 3; // Edit/Write/MultiEdit calls to classify as complex
+const COMPLEX_THRESHOLD = 3; // Edit/Write calls to classify as complex
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 // Learning library paths (relative to ~/.claude/)
@@ -121,7 +122,7 @@ function msgDiskBlock(gb) {
     `DISK CRITICAL: ${gb.toFixed(1)}GB free (threshold: ${DISK_CRIT_GB}GB)`,
     `Your home drive is nearly full. Claude may fail to write files.`,
     `Action: Free at least ${(DISK_CRIT_GB - gb).toFixed(1)}GB before continuing.`,
-  ];
+  ].join('\n');
 }
 
 function msgDiskWarn(gb) {
@@ -129,15 +130,14 @@ function msgDiskWarn(gb) {
     `Disk low: ${gb.toFixed(1)}GB free (warn threshold: ${DISK_WARN_GB}GB)`,
     `Consider cleaning up temporary files and old downloads soon.`,
     `Current session can continue, but risk increases below ${DISK_CRIT_GB}GB.`,
-  ];
+  ].join('\n');
 }
 
-function msgStaleBlock(stalePaths) {
+function msgFirstTime() {
   return [
-    `BLOCKED: Complex task completed but learning libraries are stale.`,
-    `Stale (${stalePaths.length}/${LIBS.length}): ${stalePaths.join(', ')}`,
-    `Action: Update at least one learning file before ending the session. See /growth-log.`,
-  ];
+    `Welcome! No learning libraries found — normal for new setups.`,
+    `Create memory/growth-log/ in your .claude directory. See /growth-log.`,
+  ].join('\n');
 }
 
 function msgStaleWarn(stalePaths) {
@@ -145,16 +145,8 @@ function msgStaleWarn(stalePaths) {
   return [
     `Reminder: ${stalePaths.length} learning librar${s} not updated today.`,
     `Stale: ${stalePaths.join(', ')}`,
-    `Consider capturing what you learned. Use /growth-log for guidance.`,
-  ];
-}
-
-function msgFirstTime() {
-  return [
-    `Welcome! It looks like this is your first session with learning tracking.`,
-    `No learning libraries found yet — this is normal for new setups.`,
-    `To start: create memory/growth-log/ in your .claude directory. See /growth-log.`,
-  ];
+    `Use /growth-log to capture what you learned.`,
+  ].join('\n');
 }
 
 // ── Edit count from input ──────────────────────────────────
@@ -181,82 +173,81 @@ function countEdits(input) {
 // ── Main hook ──────────────────────────────────────────────
 
 /**
- * @param {object} ctx
- * @param {string[]} ctx.flags  — enabled flags (standard, strict, minimal)
- * @param {object}   ctx.input  — parsed stdin JSON (transcript messages)
- * @returns {{ code: number, messages: string[][] }}
+ * Hook entry point. Matches run-with-flags.js contract exactly.
+ *
+ * @param {string} raw     — raw stdin JSON (transcript data)
+ * @param {object} options — { hookId, pluginRoot, scriptPath, truncated, maxStdin }
+ * @returns {{ exitCode: number, stderr?: string }}
  */
-function run(ctx) {
-  const flags = ctx.flags || [];
-  const strict = flags.includes('strict');
-  const minimal = flags.includes('minimal');
+function run(raw, options = {}) {
+  if (options.truncated) {
+    return {
+      exitCode: 0,
+      stderr: '[delivery-gate] stdin truncated, skipping (fail-open)\n'
+    };
+  }
+
+  // Parse stdin JSON for transcript edit count
+  let input = {};
+  try {
+    if (typeof raw === 'string' && raw.trim()) {
+      input = JSON.parse(raw);
+    }
+  } catch {
+    // Malformed JSON → fail-open, don't block
+  }
+
   const homedir = os.homedir();
   const now = Date.now();
-  const messages = [];
+  const lines = [];
 
-  // 1. Disk check (fail-open)
+  // 1. Disk check (fail-open: null → skip)
   const freeGB = getDiskFreeGB();
   if (freeGB !== null) {
     if (freeGB < DISK_CRIT_GB) {
-      messages.push(msgDiskBlock(freeGB));
+      lines.push(msgDiskBlock(freeGB));
     } else if (freeGB < DISK_WARN_GB) {
-      messages.push(msgDiskWarn(freeGB));
+      lines.push(msgDiskWarn(freeGB));
     }
   }
 
   // 2. First-time user check
   const memoryDir = path.join(homedir, 'memory');
   if (!fs.existsSync(memoryDir)) {
-    messages.push(msgFirstTime());
-    emitMessages(messages, minimal);
-    return { code: 0, messages };
+    lines.push(msgFirstTime());
+    const stderr = lines.map(l => `[delivery-gate] ${l}\n`).join('');
+    return { exitCode: 0, stderr };
   }
 
   // 3. Library freshness
   const libResults = checkLibFreshness(homedir, now);
   const stalePaths = libResults.filter(r => r.stale).map(r => r.path);
-  const growthLogStale = libResults.find(
-    r => r.path === 'memory/growth-log'
-  )?.stale;
 
   // 4. Complexity check
-  const editCount = countEdits(ctx.input);
+  const editCount = countEdits(input);
   const isComplex = editCount >= COMPLEX_THRESHOLD;
 
-  // 5. Block / warn
-  if (isComplex) {
-    if (strict && stalePaths.length >= 3) {
-      messages.push(msgStaleBlock(stalePaths));
-    } else if (strict && growthLogStale && stalePaths.length >= 1) {
-      messages.push(msgStaleBlock(['memory/growth-log']));
-    }
-    // Non-blocking warning (when not already blocked)
-    if (
-      stalePaths.length > 0 &&
-      !messages.some(m => m[0].startsWith('BLOCKED'))
-    ) {
-      messages.push(msgStaleWarn(stalePaths));
+  // 5. Warn on stale (complex sessions) or remind (simple sessions)
+  if (stalePaths.length > 0) {
+    if (isComplex) {
+      lines.push(msgStaleWarn(stalePaths));
+    } else {
+      // Simple session — just a quick growth-log reminder if it's the stalest
+      const growthLog = libResults.find(r => r.path === 'memory/growth-log');
+      if (growthLog && growthLog.stale) {
+        lines.push(`Quick reminder: growth-log hasn't been updated in ${growthLog.hoursAgo.toFixed(0)}h.`);
+      }
     }
   }
 
-  emitMessages(messages, minimal);
+  // 6. Output
+  if (lines.length === 0) return { exitCode: 0 };
 
-  const blocked = messages.some(
-    m => m[0].startsWith('BLOCKED') || m[0].startsWith('DISK CRITICAL')
-  );
-  return { code: blocked ? 2 : 0, messages };
-}
+  const stderr = lines.map(l => `[delivery-gate] ${l}\n`).join('');
 
-function emitMessages(messages, minimal) {
-  if (minimal) return;
-  for (const group of messages) {
-    for (const m of group) {
-      const isBlock =
-        m.startsWith('BLOCKED') || m.startsWith('DISK CRITICAL');
-      const tag = isBlock ? '[delivery-gate] BLOCK: ' : '[delivery-gate] ';
-      process.stderr.write(`${tag}${m}\n`);
-    }
-  }
+  // Only block on disk critical (not on stale libraries — that's advisory)
+  const blocked = lines.some(l => l.startsWith('DISK CRITICAL'));
+  return { exitCode: blocked ? 2 : 0, stderr };
 }
 
 module.exports = { run };
