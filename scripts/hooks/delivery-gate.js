@@ -31,6 +31,8 @@ const COMPLEX_THRESHOLD = 3; // Edit/Write calls to classify as complex
 const STALE_THRESHOLD_COUNT = 3; // &ge; this many stale libs &rarr; block (strict mode)
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const MODE = (process.env.DELIVERY_GATE_MODE || 'strict').toLowerCase();
+const MAX_TRANSCRIPT_BYTES = 10 * 1024 * 1024; // 10MB — refuse to parse larger transcripts
+const EDIT_TOOL_NAMES = new Set(['Write', 'Edit', 'MultiEdit']);
 
 // Learning library paths (relative to ~/.claude/)
 const LIBS = [
@@ -168,27 +170,72 @@ function msgStaleWarn(stalePaths) {
 // ── Edit count from transcript ─────────────────────────────
 
 /**
+ * Recursively count Write/Edit/MultiEdit tool_use entries in a parsed JSON value.
+ * Handles both Claude Code JSONL (type: "assistant" with message.content blocks)
+ * and flat tool format (type: "tool_use" or tool_name field).
+ *
+ * @param {*} value — parsed JSON value to scan
+ * @param {number} depth — recursion guard (max 10)
+ * @returns {number}
+ */
+function countEditToolUses(value, depth = 0) {
+  if (value == null || depth > 10) return 0;
+
+  let count = 0;
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      count += countEditToolUses(item, depth + 1);
+    }
+  } else if (typeof value === 'object') {
+    // Flat tool format: the entry itself is a tool_use
+    if ((value.type === 'tool_use' || value.tool_name) &&
+        EDIT_TOOL_NAMES.has(value.tool_name || value.name)) {
+      count += 1;
+    }
+    // Claude Code JSONL: assistant message with nested content blocks
+    if (value.type === 'assistant' && Array.isArray(value.message?.content)) {
+      for (const block of value.message.content) {
+        if (block.type === 'tool_use' && EDIT_TOOL_NAMES.has(block.name)) {
+          count += 1;
+        }
+      }
+    }
+  }
+
+  return count;
+}
+
+/**
  * Count Write/Edit/MultiEdit tool calls in the session transcript.
  * Stop payloads provide `transcript_path` (JSONL), not `.messages` array.
+ *
+ * Validates transcript_path before parsing: resolves to absolute path,
+ * checks isFile() and enforces MAX_TRANSCRIPT_BYTES. Parses each line
+ * as JSON and recursively counts tool_use entries.
  */
 function countEdits(input) {
   const transcriptPath = input?.transcript_path;
   if (!transcriptPath) return 0;
 
+  // Validate transcript_path before reading
+  try {
+    const resolved = path.resolve(transcriptPath);
+    const stat = fs.statSync(resolved);
+    if (!stat.isFile()) return 0;
+    if (stat.size > MAX_TRANSCRIPT_BYTES) return 0;
+  } catch {
+    return 0; // Fail-open: can't stat transcript
+  }
+
   try {
     const content = fs.readFileSync(transcriptPath, 'utf8');
-    const lines = content.split('\n');
     let count = 0;
-    for (const line of lines) {
-      // Only count tool_use blocks (not tool definitions in system prompt)
-      if (!line.includes('"type":"tool_use"') && !line.includes('"type": "tool_use"')) continue;
-      if (
-        line.includes('"name":"Write"') || line.includes('"name": "Write"') ||
-        line.includes('"name":"Edit"') || line.includes('"name": "Edit"') ||
-        line.includes('"name":"MultiEdit"') || line.includes('"name": "MultiEdit"')
-      ) {
-        count++;
-      }
+    for (const line of content.split('\n')) {
+      if (!line.trim()) continue;
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; }
+      count += countEditToolUses(entry);
     }
     return count;
   } catch {
