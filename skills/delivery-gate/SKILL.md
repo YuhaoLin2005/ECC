@@ -1,126 +1,119 @@
 ---
 name: delivery-gate
-description: Stop hook that blocks Claude from finishing until quality checks pass. Detects rationalization patterns (surface text heuristics), stale learning logs (filesystem mtime), and low disk space. Complements self-audit by mechanically enforcing learning capture habits.
-version: 1.1.1
+description: "Auto-trigger Stop hook that blocks session end until mechanical quality checks pass. Checks disk space, learning library freshness, and growth-log staleness — no configuration needed."
+version: 2.0.0
 metadata:
   origin: ECC
+  autoTrigger: Stop hook (matcher: "*")
+  installModule: workflow-quality
 ---
 
-# Delivery Gate — Mechanical Quality Gate for Claude Code
+# Delivery Gate — Zero-Config Auto-Trigger
 
-A **Stop hook** that checks three things before Claude can finish a session, using only **deterministic checks** — file modification timestamps, disk usage, and regex patterns on the transcript text. No AI inference.
+> **What it does:** At the end of every Claude Code session, delivery-gate checks three mechanical facts before allowing the session to close. No AI, no configuration — just filesystem timestamps and disk usage.
+>
+> **How it works:** A Stop hook runs `delivery-gate.js` automatically at session end. You don't need to edit settings.json or run anything manually. It's installed via the `workflow-quality` module (SKILL.md) + `hooks-runtime` module (hook script). Both default to `install: true`.
 
-This is distinct from reasoning gates (like `self-audit`): delivery-gate checks machine-verifiable facts; self-audit checks output quality across four reasoning dimensions. Together they form defense in depth:
-- **delivery-gate**: "Was the learning library touched today? Is disk space safe?"
-- **self-audit**: "Is the file content correct, complete, and honest?"
-
-This is the same pattern as CI pipeline gates — automated, deterministic checks that verify machine-readable facts rather than trusting self-reported status.
-
-## What It Checks
+## Checks (deterministic only)
 
 | Check | Mechanism | On Hit |
 |-------|-----------|--------|
-| Rationalization patterns | Regex on transcript tail | **Warning only** (never blocks) |
-| Stale learning libraries | mtime on 5 configurable paths | Warning if some stale; **Block** if >=3 stale OR growth-log stale + complex task |
-| Disk space < 50GB | `shutil.disk_usage` | Warning |
-| Disk space < 15GB | `shutil.disk_usage` | **Block** (exit 2) |
+| Disk space < 15GB | `wmic` (Windows) / `df` (Unix) | **Block** (exit 2) |
+| Disk space < 50GB | `wmic` (Windows) / `df` (Unix) | Warning |
+| ≥3 learning libs stale (strict mode) | Filesystem mtime | **Block** (exit 2) |
+| growth-log stale + complex task (strict mode) | Filesystem mtime | **Block** (exit 2) |
+| Any libs stale, non-complex task | Filesystem mtime | Warning |
+| First-time user (no memory/ dir) | Filesystem existence | Guidance (never blocks) |
 
-Rationalization detection warns about patterns like "skip tests for now" and "pre-existing bug" — surface signals that thinking may have been cut short. It never blocks on its own, because regex heuristics can false-positive. The blocking conditions are: disk critical, `>=3 learning libs stale`, OR `growth-log` specifically stale (all require complex task >=3 edits).
+Disk check failures are **fail-open** — if the platform command fails for any reason, it doesn't block. The hook only blocks on verified facts.
 
-## Why
+## Why This Exists
 
-Claude Code's built-in checks cover code quality (build → type → lint → test). But there's a different failure mode: the agent produces working code while the **session hygiene was neglected** — learning not captured, rationalized shortcuts, disk running out silently.
+Claude Code checks code quality (build → type → lint → test). But there's a different failure mode: the agent produces working code while the **session hygiene was neglected** — learning not captured, disk running out silently.
 
 Over many sessions of "ship and forget," the human hasn't grown. This hook enforces the habit: complex task → must touch learning libraries.
 
-## Install
+This is the same pattern as CI pipeline gates — automated, deterministic checks that verify machine-readable facts rather than trusting self-reported status.
 
-```bash
-cp quality-gate.py ~/.claude/scripts/
+## Quick Start
+
+**Already installed.** If you installed the `workflow-quality` module, delivery-gate runs automatically at session end. No setup needed.
+
+To verify it's working:
 ```
-
-Add to `~/.claude/settings.json`:
-```json
-{
-  "hooks": {
-    "Stop": [{
-      "hooks": [{
-        "type": "command",
-        "command": "python3 ~/.claude/scripts/quality-gate.py",
-        "timeout": 5000
-      }]
-    }]
-  }
-}
+[delivery-gate] Reminder: 3 learning libraries not updated today.
+[delivery-gate] Stale: .claude/memory/growth-log, .claude/memory/decisions/log.md, .claude/memory/output-index.md
 ```
 
 ## Learning Libraries
 
-Create these files in your project's memory directory. The hook checks if at least one was updated today:
+The hook checks these 5 paths under `~/.claude/`:
 
 ```
-memory/
-├── growth-log/          # Daily learning entries (directory)
-├── decisions/log.md     # Decision log
-├── output-index.md      # Index of session outputs
-├── ratings-tracker.md   # Skill ratings over time
-└── tooling_capabilities.md  # Known tools inventory
+.claude/
+└── memory/
+    ├── growth-log/          # Daily learning entries (directory, recursive)
+    ├── decisions/log.md     # Decision log
+    ├── output-index.md      # Index of session outputs
+    ├── ratings-tracker.md   # Skill ratings over time
+    └── tooling_capabilities.md  # Known tools inventory
 ```
 
-Customize the `LIBS` dict to match your own file structure.
+If at least one was modified today, the check passes. If you use different paths, edit the `LIBS` array in `scripts/hooks/delivery-gate.js`.
 
-## Configuration
+## Behavior by Session Type
 
-Edit `quality-gate.py`:
+| Session | Edit Count | Behavior |
+|---------|-----------|----------|
+| Simple (typo, query, single-line) | < 3 | Warning if libs stale, never blocks |
+| Complex (multi-file, new feature) | ≥ 3 | Block if ≥3 libs stale OR growth-log stale (strict mode) |
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `RATIONALIZE` | 4 patterns | Regex patterns for rationalization detection |
-| `LIBS` | 5 libraries | Files/dirs to check for today's updates |
-| `COMPLEX_THRESHOLD` | 3 | Edit/Write calls to classify as complex |
-| `DISK_WARN_GB` | 50 | Warn below this |
-| `DISK_CRIT_GB` | 15 | Block below this |
+**Strict mode** is the default. Set `DELIVERY_GATE_MODE=minimal` to only block on disk-critical — learning checks become warnings. Set in `.claude/settings.json` or your shell profile.
 
 ## Examples
 
 **Simple session — allowed:**
 ```
-edit_count=1 (< 3, not complex) → exit 0
+edit_count=1 → not complex → exit 0
+(warns about stale libs but never blocks)
 ```
 
 **Complex task, learning captured — allowed:**
 ```
-edit_count=5 (complex) → checks LIBS → growth-log updated today → exit 0
+edit_count=5 → complex → checks libs → growth-log updated today → exit 0
 ```
 
 **Complex task, no learning — BLOCKED:**
 ```
-edit_count=4 (complex) → checks LIBS → all 5 stale → exit 2
-stderr: "Blocked: complex task completed but no learning captured today."
+edit_count=4 → complex → checks libs → 5 stale → exit 2
+stderr: "BLOCKED: Complex task completed (4 edits) but 5 learning libraries not updated.
+Stale: .claude/memory/growth-log, .claude/memory/decisions/log.md, ..."
 ```
 
-**Low disk space — BLOCKED:**
+**First-time user — guided:**
 ```
-disk_free=12GB < 15GB critical → exit 2
-stderr: "Blocked: disk space at 12GB (threshold: 15GB)."
+memory/ dir doesn't exist → "Welcome! ..." → exit 0
 ```
+
+## Paired Skills
+
+- **`/growth-log`** — Teaches *what* to write in learning files so delivery-gate's timestamp checks actually capture useful patterns
+- **`/self-audit`** — Reasoning quality gate (completeness/consistency/groundedness/honesty) — complements delivery-gate's mechanical checks
+
+Together: delivery-gate checks the *habit*, growth-log teaches the *content*, self-audit checks the *quality*.
 
 ## Limitations
 
-The hook enforces the **habit** of touching learning libraries, not the **quality** of what was recorded. If `output-index.md` is updated but `growth-log` is skipped, the hook passes (1 of 5 libraries touched). This is by design: mechanical gates check machine-verifiable facts. For content quality verification, pair with `self-audit`.
+The hook enforces the **habit** of touching learning libraries, not the **quality** of what was recorded. If `output-index.md` is updated but `growth-log` is skipped, the hook passes (1 of 5 libraries touched). This is by design — mechanical gates check machine-verifiable facts. For content quality, pair with `self-audit`.
 
 ## Compatibility
 
-- Python 3.8+ (uses `from __future__ import annotations`)
-- Cross-platform: Windows, macOS, Linux
-- Zero dependencies beyond stdlib
-
-## Quality
-
-This code went through 4 rounds of automated code review (CodeRabbit + Greptile) with 9 real bugs found and fixed.
+- Node.js 16+ (no npm dependencies — stdlib only)
+- Cross-platform: Windows (wmic/PowerShell fallback), macOS/Linux (df)
+- Zero external dependencies
 
 ## See Also
 
-- `self-audit` — Reasoning quality gate (completeness/consistency/groundedness/honesty)
-- `verification-loop` — Code quality checks (build/type/lint/test)
-- `gateguard` — PreToolUse safety gate
+- `scripts/hooks/delivery-gate.js` — Full source with inline configuration
+- `/growth-log` — How to write useful learning entries
+- `/self-audit` — Reasoning quality verification

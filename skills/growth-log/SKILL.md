@@ -1,16 +1,41 @@
 ---
 name: growth-log
-description: "Use after a complex task, failure, or when reviewing what was learned. Teaches how to write growth logs that extract reusable patterns — not diary entries."
-version: 1.1.0
+description: "Use after complex tasks, failures, or when capturing what you learned. Pre-check verifies learning files exist before you write. Teaches how to write growth logs that extract reusable patterns — not diary entries."
+version: 1.2.0
 metadata:
   origin: ECC
+  autoActivation: skill keyword match in description
+  installModule: workflow-quality
 ---
 
-# Growth Log Skill
+# Growth Log — Pre-Check + Writing Guide
 
+> **Pre-check first:** Before you write anything, the skill verifies that your learning library exists. First-time setup takes 30 seconds. After that, every session end triggers `delivery-gate` to confirm you actually wrote something.
+>
 > **The problem:** Most people write "fixed a bug in X" as a learning log. That's a diary entry, not a learning artifact. A real growth log extracts the *pattern* so you recognize it next time.
 >
-> **This skill teaches:** How to write learning entries that compound across sessions. Works with any note-taking system — Markdown files, Notion, Obsidian, plain text. Templates are generic; adapt to your setup.
+> **This skill teaches:** How to write learning entries that compound across sessions. Works with any note-taking system — Markdown files, Notion, Obsidian, plain text.
+
+## Quick Start
+
+- **First-time setup:** Create `~/.claude/memory/growth-log/` directory. That's it — `delivery-gate` handles the rest.
+- **When to write:** After complex tasks (multi-file, new feature, architecture change), failures, or non-obvious decisions. Skip for typos and single-line tweaks.
+- **What to write:** One `.md` file per day (`YYYY-MM-DD.md`), each entry 4-8 sentences, title names the *pattern* not the event.
+
+## Pre-Check (runs automatically)
+
+When you invoke `/growth-log`, the skill first verifies:
+
+```
+[growth-log] Pre-check:
+[growth-log]   memory/ dir: ✓ exists
+[growth-log]   memory/growth-log/: ✓ exists (3 entries)
+[growth-log]   memory/decisions/log.md: ✓ exists (updated today)
+[growth-log]   memory/output-index.md: ✗ missing
+[growth-log]   → Create it? A blank output-index.md takes 10 seconds.
+```
+
+**First-time user path:** If `memory/` doesn't exist, the skill creates the scaffold for you — no manual setup beyond confirming "yes, create the directory structure."
 
 ## When to Activate
 
@@ -28,7 +53,7 @@ A failure is nutritionally denser than a success. One bug that took 2 hours to f
 
 **Bad:** "Successfully implemented the login flow."
 **Good (web dev):** "Login flow: session token wasn't persisting because the cookie `SameSite` defaulted to `Lax` in Chrome 128+. Pattern: always explicitly set `SameSite=None; Secure` when cross-origin. Signal to recognize: auth breaks after browser upgrade or when crossing origin boundaries."
-**Good (data pipeline):** "CSV import failed silently on empty rows because `pandas.read_csv(dropna=False)` keeps zero-width rows that `len()` counts as valid. Pattern: always `df.dropna(how='all', inplace=True)` before row-count validation."
+**Good (data pipeline):** "CSV import failed silently on empty rows because `pandas.read_csv()` keeps zero-width rows that `len()` counts as valid. Pattern: always `df.dropna(how='all', inplace=True)` before row-count validation."
 
 ### Rule 2: The Bole Principle (伯乐原则)
 
@@ -108,21 +133,34 @@ Before finalizing a growth log entry:
 
 ## Storage
 
-Store entries wherever you keep notes. Common patterns:
-- Markdown files in a `growth-log/` directory (one file per day: `YYYY-MM-DD.md`)
-- A dedicated section in Notion, Obsidian, or your note-taking app
-- Plain text files with a consistent naming convention
+```
+~/.claude/memory/
+├── growth-log/          # One .md file per day: YYYY-MM-DD.md
+├── decisions/           # Decision log: log.md
+├── output-index.md      # Cross-session file locator
+├── ratings-tracker.md   # Skill ratings over time
+└── tooling_capabilities.md  # Known tools catalog
+```
 
-Pick one convention and stick to it. Searchability matters more than format.
+The `delivery-gate` Stop hook checks these files via mtime. The pre-check in this skill verifies they exist before you write.
 
-## If You Use Delivery Gate
-
-The `delivery-gate` Stop hook checks that learning files were modified today via filesystem timestamps. This skill teaches *what to write* — so the file that delivery-gate checks actually contains useful patterns, not empty timestamps.
+## How delivery-gate and growth-log Work Together
 
 ```
-Task completes → delivery-gate checks: was the learning file touched today?
-  → Stale (no file modified): block — "what did you learn?"
-  → Fresh (file touched): pass — this skill ensures the content is useful
+Task completes → delivery-gate fires at Stop:
+  → mtime check: was any learning file touched today?
+    → Stale: block — "what did you learn?"
+    → Fresh: pass
+
+growth-log skill (this skill):
+  → Pre-check: do the files exist? (first-time setup if not)
+  → Teaches: what to write so the files contain useful patterns, not empty timestamps
 ```
 
 Having enforcement without methodology → empty entries. Having methodology without enforcement → forgotten captures. Each is independently useful; together they close the loop.
+
+## See Also
+
+- `/delivery-gate` — The Stop hook that enforces the learning habit
+- `/self-audit` — Reasoning quality verification (complements mechanical checks)
+- `scripts/hooks/delivery-gate.js` — Hook source with inline configuration
