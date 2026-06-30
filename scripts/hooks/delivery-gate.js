@@ -42,6 +42,7 @@ const LIBS = [
   'output-index.md',
   'ratings-tracker.md',
   'tooling_capabilities.md',
+  'persona_portrait_20260625.md',
 ];
 
 // ── Memory directory resolution ──────────────────────────────
@@ -141,7 +142,7 @@ function getNewestMtimeInDir(dirPath) {
       }
     }
   } catch {
-    return 0; // Directory doesn't exist → stale
+    return 0; // Directory doesn't exist or inaccessible → treat as stale
   }
   return newest;
 }
@@ -223,7 +224,7 @@ function msgDiskWarn(gb) {
 function msgFirstTime(memoryDir) {
   return [
     `Welcome! No learning libraries found — normal for new setups.`,
-    `Create ${path.join(memoryDir, 'growth-log')} in your home directory. See /growth-log.`,
+    `Create ${path.join(memoryDir, 'growth-log')} to start capturing learning. See /growth-log for guidance.`,
   ].join('\n');
 }
 
@@ -236,10 +237,14 @@ function msgFirstTime(memoryDir) {
  */
 function msgStaleBlock(stalePaths, editCount) {
   const s = stalePaths.length === 1 ? 'y' : 'ies';
+  const hasGrowthLog = stalePaths.some(p => p.includes('growth-log'));
+  const action = hasGrowthLog
+    ? `Use /growth-log to capture what you learned, then the gate will pass.`
+    : `Update the stale libraries above. See skills/delivery-gate/SKILL.md for details.`;
   return [
     `BLOCKED: Complex task completed (${editCount} edits) but ${stalePaths.length} learning librar${s} not updated.`,
     `Stale: ${stalePaths.join(', ')}`,
-    `Use /growth-log to capture what you learned, then the gate will pass.`,
+    action,
   ].join('\n');
 }
 
@@ -251,10 +256,14 @@ function msgStaleBlock(stalePaths, editCount) {
  */
 function msgStaleWarn(stalePaths) {
   const s = stalePaths.length === 1 ? 'y' : 'ies';
+  const hasGrowthLog = stalePaths.some(p => p.includes('growth-log'));
+  const hint = hasGrowthLog
+    ? `Use /growth-log to capture what you learned.`
+    : `Review and update the stale libraries listed above.`;
   return [
     `Reminder: ${stalePaths.length} learning librar${s} not updated today.`,
     `Stale: ${stalePaths.join(', ')}`,
-    `Use /growth-log to capture what you learned.`,
+    hint,
   ].join('\n');
 }
 
@@ -283,9 +292,8 @@ function countEditToolUses(value, depth = 0) {
     if ((value.type === 'tool_use' || value.tool_name) &&
         EDIT_TOOL_NAMES.has(value.tool_name || value.name)) {
       count += 1;
-    }
-    // Claude Code JSONL: assistant message with nested content blocks
-    if (value.type === 'assistant' && Array.isArray(value.message?.content)) {
+    } else if (value.type === 'assistant' && Array.isArray(value.message?.content)) {
+      // Claude Code JSONL: assistant message with nested content blocks
       for (const block of value.message.content) {
         if (block.type === 'tool_use' && EDIT_TOOL_NAMES.has(block.name)) {
           count += 1;
@@ -399,10 +407,10 @@ function checkStaleLibraries(libResults, editCount) {
     // Simple session — quick growth-log reminder if it's the stalest
     const growthLog = libResults.find(r => r.path.includes('growth-log'));
     if (growthLog && growthLog.stale) {
-      return {
-        lines: [`Quick reminder: growth-log hasn't been updated in ${growthLog.hoursAgo.toFixed(0)}h.`],
-        blocked: false
-      };
+      const msg = Number.isFinite(growthLog.hoursAgo)
+        ? `Quick reminder: growth-log hasn't been updated in ${growthLog.hoursAgo.toFixed(0)}h.`
+        : `Quick reminder: growth-log has never been updated.`;
+      return { lines: [msg], blocked: false };
     }
   }
 
@@ -439,7 +447,6 @@ function run(raw, options = {}) {
     };
   }
 
-  const homedir = os.homedir();
   const now = Date.now();
   const memoryDir = getMemoryDir();
 

@@ -23,7 +23,7 @@ metadata:
 | Disk space < 50GB | `wmic` (Windows) / `df` (Unix) | Reminder |
 | ≥3 learning libs stale (strict mode) | Filesystem mtime | **Block** (exit 2) |
 | growth-log stale + complex task (strict mode) | Filesystem mtime | **Block** (exit 2) |
-| Any libs stale, non-complex task | Filesystem mtime | Warning |
+| growth-log stale, non-complex task | Filesystem mtime | Quick reminder |
 | First-time user (no memory/ dir) | Filesystem existence | Guidance (never blocks) |
 
 Disk check failures are **fail-open** — if the platform command fails for any reason, it doesn't block. The hook only blocks on verified facts.
@@ -48,7 +48,7 @@ To verify it's working:
 
 ## Learning Libraries
 
-The hook checks these 5 paths under your memory directory:
+The hook checks these 6 paths under your memory directory:
 
 ```
 {memoryDir}/
@@ -56,7 +56,8 @@ The hook checks these 5 paths under your memory directory:
 ├── decisions/log.md     # Decision log
 ├── output-index.md      # Index of session outputs
 ├── ratings-tracker.md   # Skill ratings over time
-└── tooling_capabilities.md  # Known tools inventory
+├── tooling_capabilities.md  # Known tools inventory
+└── persona_portrait_*.md    # Persona portrait (date-stamped)
 ```
 
 **Memory directory resolution:** Checks `CLAUDE_PROJECT_DIR` for project-scoped memory (`~/.claude/projects/{hash}/memory/`), falls back to `~/.claude/memory/` for non-project sessions. This is automatic — no configuration needed.
@@ -67,10 +68,32 @@ If at least one was modified today, the check passes. If you use different paths
 
 | Session | Edit Count | Behavior |
 |---------|-----------|----------|
-| Simple (typo, query, single-line) | < 3 | Warning if libs stale, never blocks |
+| Simple (typo, query, single-line) | < 3 | Quick reminder if growth-log stale, never blocks |
 | Complex (multi-file, new feature) | ≥ 3 | Block if ≥3 libs stale OR growth-log stale (strict mode) |
 
 **Strict mode** is the default. Set `DELIVERY_GATE_MODE=minimal` to only block on disk-critical — learning checks become warnings. Set in `.claude/settings.json` or your shell profile.
+
+### Disabling / Customizing
+
+**Minimal mode** (learning checks → warnings only, never block):
+
+In `.claude/settings.json`:
+```json
+{
+  "env": {
+    "DELIVERY_GATE_MODE": "minimal"
+  }
+}
+```
+
+Or in your shell profile (`.bashrc` / `.zshrc` / PowerShell profile):
+```bash
+export DELIVERY_GATE_MODE=minimal
+```
+
+**Disable entirely:** Remove or set `"install": false` on the `workflow-quality` module in `.claude/settings.json`. See the install manifest for the exact module name.
+
+**Custom library paths:** Edit the `LIBS` array in `scripts/hooks/delivery-gate.js` — paths are relative to your memory directory.
 
 ## Examples
 

@@ -358,9 +358,10 @@ if (test('msgFirstTime is first-time-user guidance', () => {
   assert.ok(msg.includes('Welcome'));
   assert.ok(msg.includes('learning libraries'));
   assert.ok(msg.includes('growth-log'));
+  assert.ok(msg.includes('/growth-log'));
 })) passed++; else failed++;
 
-if (test('msgStaleBlock includes edit count and stale paths', () => {
+if (test('msgStaleBlock includes edit count and stale paths (growth-log stale)', () => {
   const stalePaths = ['.claude/memory/growth-log', '.claude/memory/decisions/log.md'];
   const msg = msgStaleBlock(stalePaths, 5);
   assert.ok(msg.includes('BLOCKED'));
@@ -368,6 +369,16 @@ if (test('msgStaleBlock includes edit count and stale paths', () => {
   assert.ok(msg.includes('2 learning libraries'));
   assert.ok(msg.includes('growth-log'));
   assert.ok(msg.includes('decisions/log.md'));
+  assert.ok(msg.includes('/growth-log'));
+})) passed++; else failed++;
+
+if (test('msgStaleBlock gives SKILL.md pointer when growth-log is not among stale', () => {
+  const stalePaths = ['.claude/memory/output-index.md', '.claude/memory/ratings-tracker.md'];
+  const msg = msgStaleBlock(stalePaths, 3);
+  assert.ok(msg.includes('BLOCKED'));
+  assert.ok(msg.includes('3 edits'));
+  assert.ok(msg.includes('2 learning libraries'));
+  assert.ok(msg.includes('SKILL.md'));
 })) passed++; else failed++;
 
 if (test('msgStaleBlock uses singular "library" for 1 stale path', () => {
@@ -376,12 +387,20 @@ if (test('msgStaleBlock uses singular "library" for 1 stale path', () => {
   assert.ok(!msg.includes('libraries'));
 })) passed++; else failed++;
 
-if (test('msgStaleWarn includes stale paths and growth-log hint', () => {
-  const msg = msgStaleWarn(['.claude/memory/output-index.md']);
+if (test('msgStaleWarn includes stale paths and /growth-log hint when growth-log is stale', () => {
+  const msg = msgStaleWarn(['.claude/memory/growth-log', '.claude/memory/output-index.md']);
   assert.ok(msg.includes('Reminder'));
   assert.ok(msg.includes('Stale'));
   assert.ok(msg.includes('output-index.md'));
-  assert.ok(msg.includes('growth-log'));
+  assert.ok(msg.includes('/growth-log'));
+})) passed++; else failed++;
+
+if (test('msgStaleWarn gives generic update hint when growth-log is not among stale', () => {
+  const msg = msgStaleWarn(['.claude/memory/output-index.md', '.claude/memory/ratings-tracker.md']);
+  assert.ok(msg.includes('Reminder'));
+  assert.ok(msg.includes('Stale'));
+  assert.ok(msg.includes('output-index.md'));
+  assert.ok(msg.includes('review and update') || msg.includes('Review and update'));
 })) passed++; else failed++;
 
 // ── run() contract: stdin/error handling ───────────────────────
