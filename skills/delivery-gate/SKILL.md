@@ -12,7 +12,7 @@ metadata:
 
 > **What it does:** At the end of every Claude Code session, delivery-gate checks three mechanical facts before allowing the session to close. No AI, no configuration — just filesystem timestamps and disk usage.
 >
-> **How it works:** A Stop hook runs `delivery-gate.js` automatically at session end. You don't need to edit settings.json or run anything manually. It's installed as part of the `workflow-quality` module.
+> **How it works:** A Stop hook runs `delivery-gate.js` automatically at session end. You don't need to edit settings.json or run anything manually. It's installed via the `workflow-quality` module (SKILL.md) + `hooks-runtime` module (hook script). Both default to `install: true`.
 
 ## Checks (deterministic only)
 
@@ -42,7 +42,7 @@ This is the same pattern as CI pipeline gates — automated, deterministic check
 To verify it's working:
 ```
 [delivery-gate] Reminder: 3 learning libraries not updated today.
-[delivery-gate] Stale: memory/growth-log, memory/decisions/log.md, memory/output-index.md
+[delivery-gate] Stale: .claude/memory/growth-log, .claude/memory/decisions/log.md, .claude/memory/output-index.md
 ```
 
 ## Learning Libraries
@@ -68,7 +68,7 @@ If at least one was modified today, the check passes. If you use different paths
 | Simple (typo, query, single-line) | < 3 | Warning if libs stale, never blocks |
 | Complex (multi-file, new feature) | ≥ 3 | Block if ≥3 libs stale OR growth-log stale (strict mode) |
 
-**Strict mode** is the default. In `minimal` mode, only disk-critical blocks — learning checks become warnings.
+**Strict mode** is the default. Set `DELIVERY_GATE_MODE=minimal` to only block on disk-critical — learning checks become warnings. Set in `.claude/settings.json` or your shell profile.
 
 ## Examples
 
@@ -85,8 +85,9 @@ edit_count=5 → complex → checks libs → growth-log updated today → exit 0
 
 **Complex task, no learning — BLOCKED:**
 ```
-edit_count=4 → complex → checks libs → all 5 stale → exit 2
-stderr: "BLOCKED: Complex task completed but learning libraries are stale."
+edit_count=4 → complex → checks libs → 5 stale → exit 2
+stderr: "BLOCKED: Complex task completed (4 edits) but 5 learning libraries not updated.
+Stale: .claude/memory/growth-log, .claude/memory/decisions/log.md, ..."
 ```
 
 **First-time user — guided:**
