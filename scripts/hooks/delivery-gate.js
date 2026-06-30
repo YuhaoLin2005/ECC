@@ -8,7 +8,11 @@
  * Contract: run(rawString, { hookId, pluginRoot, scriptPath, truncated, maxStdin })
  * Returns: { exitCode: 0|2, stderr?: string }
  *
- * Exit codes: 0 = pass/fail-open, 2 = block (disk critical only)
+ * Exit codes: 0 = pass, 2 = block
+ *   - Disk critical (&lt;15GB) always blocks
+ *   - Complex session (&ge;3 edits) + &ge;3 learning libs stale &rarr; blocks (strict mode)
+ *   - Complex session + growth-log stale &rarr; blocks (strict mode)
+ *   - Set DELIVERY_GATE_MODE=minimal to only block on disk critical
  *
  * @module delivery-gate
  */
@@ -24,15 +28,17 @@ const os = require('os');
 const DISK_WARN_GB = 50;
 const DISK_CRIT_GB = 15;
 const COMPLEX_THRESHOLD = 3; // Edit/Write calls to classify as complex
+const STALE_THRESHOLD_COUNT = 3; // &ge; this many stale libs &rarr; block (strict mode)
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const MODE = (process.env.DELIVERY_GATE_MODE || 'strict').toLowerCase();
 
 // Learning library paths (relative to ~/.claude/)
 const LIBS = [
-  'memory/growth-log',
-  'memory/decisions/log.md',
-  'memory/output-index.md',
-  'memory/ratings-tracker.md',
-  'memory/tooling_capabilities.md',
+  '.claude/memory/growth-log',
+  '.claude/memory/decisions/log.md',
+  '.claude/memory/output-index.md',
+  '.claude/memory/ratings-tracker.md',
+  '.claude/memory/tooling_capabilities.md',
 ];
 
 // ── Disk space ─────────────────────────────────────────────
@@ -58,8 +64,8 @@ function getDiskFreeGB() {
       const free = Number(psResult.trim());
       if (!isNaN(free)) return free / (1024 * 1024 * 1024);
     } else {
-      // Unix: df -BG /
-      const result = execSync('df -BG /', { encoding: 'utf8', timeout: 5000 });
+      // Unix: df -BG on home directory (not root /)
+      const result = execSync(`df -BG "${homedir}"`, { encoding: 'utf8', timeout: 5000 });
       const cols = result.split('\n')[1]?.split(/\s+/);
       if (cols && cols.length >= 4) {
         const free = parseInt(cols[3], 10);
@@ -67,7 +73,7 @@ function getDiskFreeGB() {
       }
     }
   } catch {
-    // Fail-open: can't determine disk space → don't block
+    // Fail-open: can't determine disk space &rarr; don't block
     return null;
   }
   return null;
@@ -91,7 +97,7 @@ function getNewestMtimeInDir(dirPath) {
       }
     }
   } catch {
-    return 0; // Directory doesn't exist → stale
+    return 0; // Directory doesn't exist &rarr; stale
   }
   return newest;
 }
@@ -107,7 +113,7 @@ function checkLibFreshness(homedir, now) {
         ? getNewestMtimeInDir(full)
         : stat.mtimeMs;
     } catch {
-      mtime = 0; // Missing → stale
+      mtime = 0; // Missing &rarr; stale
     }
     const hoursAgo = mtime > 0 ? (now - mtime) / (1000 * 60 * 60) : Infinity;
     results.push({ path: lib, mtime, hoursAgo, stale: hoursAgo > 24 });
@@ -136,7 +142,16 @@ function msgDiskWarn(gb) {
 function msgFirstTime() {
   return [
     `Welcome! No learning libraries found — normal for new setups.`,
-    `Create memory/growth-log/ in your .claude directory. See /growth-log.`,
+    `Create .claude/memory/growth-log/ in your home directory. See /growth-log.`,
+  ].join('\n');
+}
+
+function msgStaleBlock(stalePaths, editCount) {
+  const s = stalePaths.length === 1 ? 'y' : 'ies';
+  return [
+    `BLOCKED: Complex task completed (${editCount} edits) but ${stalePaths.length} learning librar${s} not updated.`,
+    `Stale: ${stalePaths.join(', ')}`,
+    `Use /growth-log to capture what you learned, then the gate will pass.`,
   ].join('\n');
 }
 
@@ -149,25 +164,35 @@ function msgStaleWarn(stalePaths) {
   ].join('\n');
 }
 
-// ── Edit count from input ──────────────────────────────────
+// ── Edit count from transcript ─────────────────────────────
 
+/**
+ * Count Write/Edit/MultiEdit tool calls in the session transcript.
+ * Stop payloads provide `transcript_path` (JSONL), not `.messages` array.
+ */
 function countEdits(input) {
-  let count = 0;
+  const transcriptPath = input?.transcript_path;
+  if (!transcriptPath) return 0;
+
   try {
-    const messages = input?.messages || [];
-    for (const msg of messages) {
+    const content = fs.readFileSync(transcriptPath, 'utf8');
+    const lines = content.split('\n');
+    let count = 0;
+    for (const line of lines) {
+      // Only count tool_use blocks (not tool definitions in system prompt)
+      if (!line.includes('"type":"tool_use"') && !line.includes('"type": "tool_use"')) continue;
       if (
-        msg.tool === 'Write' ||
-        msg.tool === 'Edit' ||
-        msg.tool === 'MultiEdit'
+        line.includes('"name":"Write"') || line.includes('"name": "Write"') ||
+        line.includes('"name":"Edit"') || line.includes('"name": "Edit"') ||
+        line.includes('"name":"MultiEdit"') || line.includes('"name": "MultiEdit"')
       ) {
         count++;
       }
     }
+    return count;
   } catch {
-    // Can't parse input → assume non-complex
+    return 0; // Fail-open: can't read transcript &rarr; assume simple session
   }
-  return count;
 }
 
 // ── Main hook ──────────────────────────────────────────────
@@ -175,7 +200,7 @@ function countEdits(input) {
 /**
  * Hook entry point. Matches run-with-flags.js contract exactly.
  *
- * @param {string} raw     — raw stdin JSON (transcript data)
+ * @param {string} raw     — raw stdin JSON (Stop event payload)
  * @param {object} options — { hookId, pluginRoot, scriptPath, truncated, maxStdin }
  * @returns {{ exitCode: number, stderr?: string }}
  */
@@ -187,53 +212,70 @@ function run(raw, options = {}) {
     };
   }
 
-  // Parse stdin JSON for transcript edit count
+  // Parse stdin JSON for Stop event data
   let input = {};
   try {
     if (typeof raw === 'string' && raw.trim()) {
       input = JSON.parse(raw);
     }
   } catch {
-    // Malformed JSON → fail-open, don't block
+    // Malformed JSON &rarr; fail-open (don't block on unparseable input)
+    return {
+      exitCode: 0,
+      stderr: '[delivery-gate] Could not parse stdin JSON, skipping (fail-open)\n'
+    };
   }
 
   const homedir = os.homedir();
   const now = Date.now();
   const lines = [];
+  let blocked = false;
 
-  // 1. Disk check (fail-open: null → skip)
+  // 1. Disk check (fail-open: null &rarr; skip)
   const freeGB = getDiskFreeGB();
   if (freeGB !== null) {
     if (freeGB < DISK_CRIT_GB) {
       lines.push(msgDiskBlock(freeGB));
+      blocked = true; // Disk critical always blocks
     } else if (freeGB < DISK_WARN_GB) {
       lines.push(msgDiskWarn(freeGB));
     }
   }
 
-  // 2. First-time user check
-  const memoryDir = path.join(homedir, 'memory');
+  // 2. First-time user check (~/.claude/memory/ existence)
+  const memoryDir = path.join(homedir, '.claude', 'memory');
   if (!fs.existsSync(memoryDir)) {
     lines.push(msgFirstTime());
+    // First-time users still get blocked if disk is critical
     const stderr = lines.map(l => `[delivery-gate] ${l}\n`).join('');
-    return { exitCode: 0, stderr };
+    return { exitCode: blocked ? 2 : 0, stderr };
   }
 
   // 3. Library freshness
   const libResults = checkLibFreshness(homedir, now);
   const stalePaths = libResults.filter(r => r.stale).map(r => r.path);
 
-  // 4. Complexity check
+  // 4. Complexity check (reads transcript via Stop payload's transcript_path)
   const editCount = countEdits(input);
   const isComplex = editCount >= COMPLEX_THRESHOLD;
 
-  // 5. Warn on stale (complex sessions) or remind (simple sessions)
+  // 5. Stale library handling (strict mode: block on complex sessions)
   if (stalePaths.length > 0) {
-    if (isComplex) {
+    if (isComplex && MODE !== 'minimal') {
+      // Strict mode (default): block if &ge;3 libs stale or growth-log specifically stale
+      const growthLog = libResults.find(r => r.path.includes('growth-log'));
+      const growthLogStale = growthLog && growthLog.stale;
+
+      if (stalePaths.length >= STALE_THRESHOLD_COUNT || growthLogStale) {
+        lines.push(msgStaleBlock(stalePaths, editCount));
+        blocked = true;
+      }
+    } else if (isComplex) {
+      // Minimal mode: warn only
       lines.push(msgStaleWarn(stalePaths));
     } else {
       // Simple session — just a quick growth-log reminder if it's the stalest
-      const growthLog = libResults.find(r => r.path === 'memory/growth-log');
+      const growthLog = libResults.find(r => r.path.includes('growth-log'));
       if (growthLog && growthLog.stale) {
         lines.push(`Quick reminder: growth-log hasn't been updated in ${growthLog.hoursAgo.toFixed(0)}h.`);
       }
@@ -244,9 +286,6 @@ function run(raw, options = {}) {
   if (lines.length === 0) return { exitCode: 0 };
 
   const stderr = lines.map(l => `[delivery-gate] ${l}\n`).join('');
-
-  // Only block on disk critical (not on stale libraries — that's advisory)
-  const blocked = lines.some(l => l.startsWith('DISK CRITICAL'));
   return { exitCode: blocked ? 2 : 0, stderr };
 }
 
