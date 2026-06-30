@@ -116,7 +116,8 @@ function checkLibFreshness(homedir, now) {
       mtime = 0; // Missing &rarr; stale
     }
     const hoursAgo = mtime > 0 ? (now - mtime) / (1000 * 60 * 60) : Infinity;
-    results.push({ path: lib, mtime, hoursAgo, stale: hoursAgo > 24 });
+    const oneDayHours = ONE_DAY_MS / (1000 * 60 * 60);
+    results.push({ path: lib, mtime, hoursAgo, stale: hoursAgo > oneDayHours });
   }
   return results;
 }
