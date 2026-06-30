@@ -53,7 +53,7 @@ A failure is nutritionally denser than a success. One bug that took 2 hours to f
 
 **Bad:** "Successfully implemented the login flow."
 **Good (web dev):** "Login flow: session token wasn't persisting because the cookie `SameSite` defaulted to `Lax` in Chrome 128+. Pattern: always explicitly set `SameSite=None; Secure` when cross-origin. Signal to recognize: auth breaks after browser upgrade or when crossing origin boundaries."
-**Good (data pipeline):** "CSV import failed silently on empty rows because `pandas.read_csv(dropna=False)` keeps zero-width rows that `len()` counts as valid. Pattern: always `df.dropna(how='all', inplace=True)` before row-count validation."
+**Good (data pipeline):** "CSV import failed silently on empty rows because `pandas.read_csv()` keeps zero-width rows that `len()` counts as valid. Pattern: always `df.dropna(how='all', inplace=True)` before row-count validation."
 
 ### Rule 2: The Bole Principle (伯乐原则)
 
