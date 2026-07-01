@@ -48,7 +48,7 @@ To verify it's working:
 
 ## Learning Libraries
 
-The hook checks these 6 paths under your memory directory:
+The hook checks these 5 paths under your memory directory:
 
 ```
 {memoryDir}/
@@ -56,8 +56,7 @@ The hook checks these 6 paths under your memory directory:
 ├── decisions/log.md     # Decision log
 ├── output-index.md      # Index of session outputs
 ├── ratings-tracker.md   # Skill ratings over time
-├── tooling_capabilities.md  # Known tools inventory
-└── persona_portrait_*.md    # Persona portrait (date-stamped)
+└── tooling_capabilities.md  # Known tools inventory
 ```
 
 **Memory directory resolution:** Checks `CLAUDE_PROJECT_DIR` for project-scoped memory (`~/.claude/projects/{hash}/memory/`), falls back to `~/.claude/memory/` for non-project sessions. This is automatic — no configuration needed.
