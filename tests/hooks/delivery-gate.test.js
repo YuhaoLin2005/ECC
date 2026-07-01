@@ -448,7 +448,7 @@ if (test('result always has numeric exitCode and optional stderr', () => {
 // ── Cleanup ────────────────────────────────────────────────────
 
 if (tmpDir) {
-  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* cleanup can fail safely */ }
 }
 
 console.log(`\n=== Test Results ===`);
