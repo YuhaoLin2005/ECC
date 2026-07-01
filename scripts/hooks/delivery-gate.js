@@ -310,9 +310,9 @@ function countEdits(input) {
       process.stderr.write(
         `[delivery-gate] Transcript too large ` +
         `(${(stat.size / 1024 / 1024).toFixed(1)}MB > ${MAX_TRANSCRIPT_BYTES / 1024 / 1024}MB), ` +
-        `skipping edit count\n`
+        `assuming complex session\n`
       );
-      return 0;
+      return COMPLEX_THRESHOLD;
     }
   } catch {
     return 0; // Fail-open: can't stat transcript
@@ -444,7 +444,41 @@ function run(raw, options = {}) {
   const libResults = checkLibFreshness(memoryDir, now);
 
   // 4. Complexity check (reads transcript via Stop payload's transcript_path)
-  const editCount = countEdits(input);
+  let editCount = 0;
+  const transcriptPath = input?.transcript_path;
+  if (transcriptPath) {
+    // Security: validate transcript path before reading
+    try {
+      const resolved = path.resolve(transcriptPath);
+      const claudeDir = path.join(os.homedir(), '.claude');
+      const realClaudeDir = fs.realpathSync(claudeDir);
+
+      // Boundary check: transcript must be under ~/.claude/
+      if (!resolved.startsWith(realClaudeDir + path.sep) && resolved !== realClaudeDir) {
+        process.stderr.write(
+          `[delivery-gate] Transcript path outside ~/.claude/, assuming complex: ${resolved}
+`
+        );
+        editCount = COMPLEX_THRESHOLD;
+      } else {
+        // Symlink check
+        let realPath;
+        try { realPath = fs.realpathSync(resolved); } catch { realPath = resolved; }
+        if (realPath !== resolved) {
+          process.stderr.write(
+            `[delivery-gate] Transcript path is a symlink, assuming complex: ${resolved}
+`
+          );
+          editCount = COMPLEX_THRESHOLD;
+        } else {
+          editCount = countEdits(input);
+        }
+      }
+    } catch {
+      // Can't validate => assume complex (fail-safe)
+      editCount = COMPLEX_THRESHOLD;
+    }
+  }
 
   // 5. Stale library handling (strict mode: block on complex sessions)
   const { lines: staleLines, blocked: staleBlocked } = checkStaleLibraries(libResults, editCount);
