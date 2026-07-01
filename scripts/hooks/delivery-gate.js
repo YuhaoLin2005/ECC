@@ -279,7 +279,7 @@ function msgStaleWarn(stalePaths) {
  * @returns {number}
  */
 function countEditToolUses(value, depth = 0) {
-  if (value == null || depth > 10) return 0;
+  if (value === null || value === undefined || depth > 10) return 0;
 
   let count = 0;
 
