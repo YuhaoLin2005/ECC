@@ -59,7 +59,7 @@ The hook checks these 5 paths under `~/.claude/`:
     └── tooling_capabilities.md  # Known tools inventory
 ```
 
-If at least one was modified today, the check passes. If you use different paths, edit the `LIBS` array in `scripts/hooks/delivery-gate.js`.
+For simple sessions, touching any one library passes the check. For complex sessions (≥3 edits) in strict mode, there is a special rule: **if `growth-log` is stale, the gate blocks** even if all four other libraries were updated today. This prevents the "touched output-index but learned nothing" loophole. In minimal mode, stale libs only warn — never block.
 
 ## Behavior by Session Type
 
@@ -104,7 +104,7 @@ Together: delivery-gate checks the *habit*, growth-log teaches the *content*, se
 
 ## Limitations
 
-The hook enforces the **habit** of touching learning libraries, not the **quality** of what was recorded. If `output-index.md` is updated but `growth-log` is skipped, the hook passes (1 of 5 libraries touched). This is by design — mechanical gates check machine-verifiable facts. For content quality, pair with `self-audit`.
+The hook enforces the **habit** of touching learning libraries, not the **quality** of what was recorded. There is one exception to the "any library counts" rule: for complex sessions in strict mode, `growth-log` is mandatory — if it's stale, the gate blocks regardless of other libraries' freshness. This prevents the common pattern of updating `output-index.md` alone while skipping actual learning capture. For content quality, pair with `self-audit`.
 
 ## Compatibility
 

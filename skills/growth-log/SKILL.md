@@ -148,9 +148,12 @@ The `delivery-gate` Stop hook checks these files via mtime. The pre-check in thi
 
 ```
 Task completes → delivery-gate fires at Stop:
-  → mtime check: was any learning file touched today?
-    → Stale: block — "what did you learn?"
-    → Fresh: pass
+  → Simple session (0-2 edits):
+      Any one lib updated today → pass. Stale libs → warning only.
+  → Complex session (≥3 edits), strict mode:
+      ≤2 libs stale AND growth-log fresh → pass
+      ≥3 libs stale OR growth-log stale → block ("what did you learn?")
+      (minimal mode: warn only, never block)
 
 growth-log skill (this skill):
   → Pre-check: do the files exist? (first-time setup if not)
