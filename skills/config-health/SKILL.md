@@ -28,7 +28,8 @@ Boundary: "Can this be fixed retroactively?" Config drift → config-health warn
 ## What It Monitors
 
 1. Hook Wiring Audit: every script a hook command references, checked against
-   disk. Runs at session start and on every tool call.
+   disk. Runs at session start, and on every tool call the PreToolUse `matcher`
+   selects (with the wiring documented below, that is Edit and Write).
 2. Rule Health: every `rules/*.md` referenced from `CLAUDE.md` exists.
 3. Guard Staleness: rules whose fire counter has been zero across the last five
    sessions recorded in `rule-health.jsonl` — the last five *records*, then
@@ -124,10 +125,12 @@ with `~` or `$HOME`, if you want them covered.
 
 ## PreToolUse Cost
 
-`--pretool` runs once per tool call, in a fresh process, and the audit runs on
+`--pretool` runs once per matched tool call — the calls the PreToolUse
+`matcher` selects, which under the wiring below is every Edit and every Write,
+not every tool the harness can make — in a fresh process, and the audit runs on
 every one of them. "Does this script exist" is a property of the settings files,
 not of the call about to run, so gating it on a tool-class list trades a
-property that can be proved (every call is verified) for one that cannot (a
+property that can be proved (every matched call is verified) for one that cannot (a
 mutation is imminent).
 
 Measured on this repository's **real 23 hook commands**, Python 3.12 on
@@ -155,8 +158,8 @@ attribution is script size, not the audit. Stripping every docstring recovers
 0.15 ms of the compile, so it is the code, not the prose.
 
 If that 8% matters, drop `--pretool` from your wiring and keep `--startup`: the
-audit then runs once per session instead of once per tool call, and the parse
-cost goes with it.
+audit then runs once per session instead of once per matched tool call, and the
+parse cost goes with it.
 
 The hook payload is drained and discarded, never parsed and never printed. Its
 size cannot change the verdict. `timeout` in the hook wiring, not the read, is
